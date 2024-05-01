@@ -1,7 +1,12 @@
 A simple web paste application.
+
+![screenshot1](/etc/Screenshot 2024-05-01 145831.png)
+
 Currently support:
 
 Text, HTML, and Imgaes
+![screenshot2](/etc/Screenshot 2024-05-01 145853.png)
+![screenshot3](/etc/Screenshot 2024-05-01 150454.png)
 
 Drag and Drop
 
