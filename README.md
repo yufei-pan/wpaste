@@ -1,6 +1,8 @@
 A simple web paste application.
 Currently support:
 
+Text, HTML, and Imgaes
+
 Drag and Drop
 
 Ctrl C (CMD C)
