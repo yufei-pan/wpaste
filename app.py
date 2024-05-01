@@ -11,6 +11,8 @@ import imghdr
 app = Flask(__name__)
 BASE_DIR = './messages/'
 
+version = '1.0.0'
+
 #TODO: add feature: copy from the webpage should be easier : ctrl c copy the last message , add a copy to clipboard button to messages
 #TODO: add periodic update / event based update to the webpage
 
