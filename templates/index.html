@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Copy Paste Board</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <h2>Copy Paste Board</h2>
+    <button type="button" onclick="deleteAllMessages()" class="delete-all-button">Delete All Messages</button>
+    <p>
+        You can:<br/>
+        - Paste text or images here directly.<br/>
+        - Drag and drop images here.<br/>
+        - Type a message in the text area below and click "Send Message".<br/>
+        - Select an image file and click "Send Message".<br/>
+        - Copy a message by clicking the "Copy to Clipboard" button.<br/>
+        - Delete a message by clicking the "Delete" button.<br/>
+        - Delete all messages by clicking the "Delete All Messages" button.<br/>
+        - Copy the latest message by pressing #Copy Combination Key#.<br/>
+        - Messages are automatically updated every 5 seconds.
+
+    </p>
+    <form id="messageForm" enctype="multipart/form-data">
+        <textarea id="message" name="message" placeholder="Type your message here..." rows="4" cols="50"></textarea>
+        <br>
+        <input type="file" id="image" name="image" accept="image/*">
+        <br>
+        <button type="submit">Send Message</button>
+    </form>
+    
+
+    <h3>Messages from the Last 7 Days</h3>
+    <div id="messages"></div>
+    <script src="
+    https://cdn.jsdelivr.net/npm/dompurify@3.1.0/dist/purify.min.js
+    "></script>
+    <script src="{{ url_for('static', filename='js/scripts.js') }}"></script>
+</body>
+</html>

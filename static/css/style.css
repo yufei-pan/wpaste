@@ -1,0 +1,85 @@
+/* General reset */
+html, body {
+	height: 100%; 
+	margin: 0;
+	padding: 0;
+	overflow-x: hidden;
+	font-family: 'Arial', sans-serif; /* Clean, simple font */
+	background-color: #f9f9f9; /* Soft background color */
+	color: #333; /* Dark gray text for better readability */
+}
+
+body {
+	display: flex;
+	flex-direction: column;
+	justify-content: flex-start;
+	align-items: stretch;
+	min-height: 100vh;
+}
+
+h2, h3 ,p {
+	color: #2c3e50; /* Slightly darker shade for headings */
+	padding: 20px 30px; /* Spacious padding for a clean look */
+}
+
+/* Enhancing the form and input elements */
+textarea, input[type="file"] {
+	width: calc(100% - 60px); /* Full-width but allowing for padding */
+	margin: 10px 30px;
+	padding: 10px;
+	border: 1px solid #ccc;
+	border-radius: 4px;
+	box-sizing: border-box; /* Makes sure padding does not affect width */
+}
+
+button {
+	background-color: #3498db; /* Pleasant blue */
+	color: white;
+	border: none;
+	padding: 10px 20px;
+	margin: 10px 30px;
+	cursor: pointer;
+	border-radius: 5px;
+	transition: background-color 0.3s;
+}
+
+button:hover {
+	background-color: #2874a6; /* Darker blue on hover for feedback */
+}
+
+.delete-button {
+	background-color: #e74c3c; /* Red color for delete actions */
+}
+
+.delete-all-button {
+	background-color: #555; /* Darker button for delete all */
+}
+
+.message pre {
+	background: #f0f0f0;
+	white-space: pre-wrap;
+	word-wrap: break-word;
+	margin: 5px 30px;
+	padding: 15px;
+	border: 1px solid #ddd;
+	border-radius: 5px;
+}
+
+.message {
+	margin-bottom: 20px;
+	background: white;
+	border: 1px solid #ddd;
+	border-radius: 5px;
+	box-shadow: 0 2px 4px rgba(0,0,0,0.1); /* Subtle shadow for depth */
+	
+}
+
+/* Styling for images within messages */
+.message img {
+	max-width: 100%; /* Ensure images are not wider than their container */
+	height: auto; /* Maintain aspect ratio */
+	display: block; /* Remove extra space below the image */
+	margin: 10px auto; /* Centering image and providing some margin */
+	border-radius: 4px; /* Slightly rounded corners for a softer look */
+	box-shadow: 0 2px 5px rgba(0,0,0,0.15); /* Adding a light shadow for depth */
+}

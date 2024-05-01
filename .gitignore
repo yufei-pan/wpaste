@@ -1,0 +1,9 @@
+# Ignore Python compiled files
+__pycache__/
+*.py[cod]
+
+# Ignore all files and directories under 'messages'
+messages/
+
+test.tsv
+mainIndex.tsv
