@@ -14,3 +14,6 @@ Delete messages manually
 Delete ALL
 
 TODO: ADD user session support to allow private copy paste boards.
+
+
+Include TSVZ from https://github.com/yufei-pan/TSVZ
