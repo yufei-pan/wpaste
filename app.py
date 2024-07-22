@@ -126,8 +126,8 @@ def get_last_update():
 def get_messages():
     messages = []
     for id in mainIndex:
-        # if message is older than 7 days, mark it for deletion
-        if datetime.now().timestamp() - float(mainIndex[id][1]) > 7 * 24 * 60 * 60:
+        # if message is older than 2 hours, mark it for deletion
+        if datetime.now().timestamp() - float(mainIndex[id][1]) > 7200:
             delete_message(id)
         else:
             if os.path.exists(mainIndex[id][2]):

@@ -30,9 +30,22 @@ document.getElementById('messageForm').addEventListener('submit', async function
 });
 
 function isHTML(str) {
-	const doc = new DOMParser().parseFromString(str, "text/html");
-	return Array.from(doc.body.childNodes).some(node => node.nodeType === 1);
+    // Parse the string as HTML
+    const doc = new DOMParser().parseFromString(str, "text/html");
+
+    // Check for parsererrors
+    if (doc.querySelector('parsererror')) {
+        return false;
+    }
+
+    // Check if any element nodes exist in the head or body
+    const hasElementNodes = (node) => node.nodeType === 1 && node.tagName.toLowerCase() !== 'html';
+    const bodyHasNodes = Array.from(doc.body.childNodes).some(hasElementNodes);
+    const headHasNodes = Array.from(doc.head.childNodes).some(hasElementNodes);
+
+    return bodyHasNodes || headHasNodes;
 }
+
 
 async function fetchMessages() {
 	const response = await fetch('/messages');
@@ -94,84 +107,92 @@ async function fetchMessages() {
 }
 
 function copyToClipboard(element) {
+	if (!element) {
+		showToast('No content to copy!');
+		return;
+	}
 	if (element.tagName === 'IMG') {
 		if (typeof ClipboardItem !== "undefined") {
 			fetch(element.src)
 				.then(res => res.blob())
 				.then(blob => {
-					const item = new ClipboardItem({ "image/png": blob });
-					navigator.clipboard.write([item]).then(function() {
-						showToast('Image copied to clipboard!');
-					}, function(err) {
-						showToast('Failed to copy image: ' + err);
-					});
+					if (blob.type === "image/png") {
+						// If the image is already a PNG, use it directly
+						const item = new ClipboardItem({ "image/png": blob });
+						navigator.clipboard.write([item]).then(() => {
+							showToast('Image copied to clipboard!');
+						}, (err) => {
+							showToast('Failed to copy image: ' + err);
+						});
+					} else {
+						// Convert the image to PNG if it's not already PNG
+						const canvas = document.createElement('canvas');
+						const ctx = canvas.getContext('2d');
+						const img = new Image();
+						img.onload = () => {
+							canvas.width = img.width;
+							canvas.height = img.height;
+							ctx.drawImage(img, 0, 0);
+							canvas.toBlob((pngBlob) => {
+								const item = new ClipboardItem({ "image/png": pngBlob });
+								navigator.clipboard.write([item]).then(() => {
+									showToast('Converted Image copied to clipboard!');
+								}, (err) => {
+									showToast('Failed to copy image: ' + err);
+								});
+							}, 'image/png');
+						};
+						img.src = URL.createObjectURL(blob);
+					}
 				});
 		} else {
 			// Fallback: Copy the image URL to the clipboard.
-			navigator.clipboard.writeText(element.src).then(function() {
+			navigator.clipboard.writeText(element.src).then(() => {
 				showToast('Image URL copied to clipboard!');
-			}, function(err) {
+			}, (err) => {
 				showToast('Failed to copy image URL: ' + err);
 			});
 		}
-	} else {
-		navigator.clipboard.writeText(element.textContent).then(function() {
+	} else if (element.tagName === 'PRE' || element.tagName === 'P') {
+		navigator.clipboard.writeText(element.textContent).then(() => {
 			showToast('Text copied to clipboard!');
-		}, function(err) {
+		}, (err) => {
 			showToast('Failed to copy text: ' + err);
 		});
+	} else if (element.tagName === 'DIV') {
+		const selection = window.getSelection();
+		const range = document.createRange();
+		range.selectNodeContents(element);
+		selection.removeAllRanges();
+		selection.addRange(range);
+		document.execCommand('copy');
+		selection.removeAllRanges();
+		showToast('HTML copied to clipboard!');
 	}
 }
 
+
+
+
 document.addEventListener('copy', function(e) {
 	if (document.activeElement.id === 'message') {
-		// If the message box is focused, let the browser handle copying.
+		// Let the browser handle copying if the message box is focused.
 		return;
 	}
 	const selection = window.getSelection();
 	if (!selection.toString().trim()) {
-		// Nothing is selected, attempt to copy the newest message
+		e.preventDefault(); // Prevent the default copy behavior
+		// Attempt to copy the newest message
 		const newestMessage = document.querySelector('.message');
 		if (newestMessage) {
 			const contentElement = newestMessage.querySelector('pre') || newestMessage.querySelector('img') || newestMessage.querySelector('div');
 			if (contentElement) {
-				if (contentElement.tagName === 'IMG') {
-					// If the newest message is an image, use the image copying logic
-					if (typeof ClipboardItem !== "undefined" && contentElement.src) {
-						e.preventDefault(); // Prevent the default copy behavior
-						fetch(contentElement.src)
-							.then(res => res.blob())
-							.then(blob => {
-								const item = new ClipboardItem({ "image/png": blob });
-								navigator.clipboard.write([item]);
-								showToast('Image copied to clipboard!');
-							})
-							.catch(err => showToast('Failed to copy image: ' + err));
-					} else {
-						navigator.clipboard.writeText(contentElement.src);
-						showToast('Image URL copied to clipboard!');
-					}
-				} else if (contentElement.tagName === 'PRE' ) {
-					// If the newest message is text, use the text copying logic
-					e.preventDefault(); // Prevent the default copy behavior
-					navigator.clipboard.writeText(contentElement.textContent)
-						.then(() => showToast('Text copied to clipboard!'))
-						.catch(err => showToast('Failed to copy text: ' + err));
-				} else if (contentElement.tagName === 'DIV') {
-					// If the newest message is HTML, use the HTML copying logic
-					e.preventDefault(); // Prevent the default copy behavior
-					const range = document.createRange();
-					range.selectNode(contentElement);
-					selection.removeAllRanges();
-					selection.addRange(range);
-					document.execCommand('copy');
-					selection.removeAllRanges();
-					showToast('HTML copied to clipboard!');
-				}
+				copyToClipboard(contentElement);
 			}
 		}
 	}
 });
+
 
 
 
