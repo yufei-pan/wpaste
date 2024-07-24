@@ -26,7 +26,18 @@ document.getElementById('messageForm').addEventListener('submit', async function
 	const result = await response.json();
 	//alert(result.message);
 	document.getElementById('message').value = '';
+	document.getElementById('image-name').textContent = '';
+	document.getElementById('video-name').textContent = '';
+	document.getElementById('file-name').textContent = '';
 	checkForUpdates();
+});
+
+document.getElementById('clearButton').addEventListener('click', function() {
+    document.getElementById('messageForm').reset(); // Reset the form
+    // Clear any filenames displayed
+    document.getElementById('image-name').textContent = '';
+    document.getElementById('video-name').textContent = '';
+    document.getElementById('file-name').textContent = '';
 });
 
 function isHTML(str) {
@@ -72,11 +83,43 @@ async function fetchMessages() {
 				contentToCopy = pre; // Plain text content.
 			}
 		} else if (message.type === 'image') {
+			// Also print the image filename if available and not image.png
+			if (message.filename && message.filename !== 'image.png') {
+				const imgName = document.createElement('p');
+				imgName.textContent = message.filename;
+				messageElement.appendChild(imgName);
+			}
 			const img = document.createElement('img');
 			img.src = message.content;
 			img.style.maxWidth = '100%';
 			messageElement.appendChild(img);
 			contentToCopy = img; // Image element for copying.
+		} else if (message.type === 'video') {
+			// Also print the video filename if available
+			if (message.filename) {
+				const videoName = document.createElement('p');
+				videoName.textContent = message.filename;
+				messageElement.appendChild(videoName);
+			}
+			const video = document.createElement('video');
+			video.src = message.content;
+			video.controls = true;
+			video.style.maxWidth = '100%';
+			messageElement.appendChild(video);
+			contentToCopy = video; // Video element for copying.
+		} else if (message.type === 'file') {
+			// Also print the file name if available
+			if (message.filename) {
+				const fileName = document.createElement('p');
+				fileName.textContent = message.filename;
+				messageElement.appendChild(fileName);
+			}
+			const a = document.createElement('a');
+			a.href = message.content;
+			a.textContent = message.content;
+			a.download = ''; // Optional: set a.download to a specific filename if necessary
+			messageElement.appendChild(a);
+			contentToCopy = a; // Link element for copying.
 		} else {
 			console.error('Unknown message type:', message.type);
 			const pre = document.createElement('pre');
@@ -193,9 +236,6 @@ document.addEventListener('copy', function(e) {
 	}
 });
 
-
-
-
 function showToast(message) {
 	const toast = document.createElement('div');
 	toast.textContent = message;
@@ -308,6 +348,19 @@ async function deleteAllMessages() {
 	await fetch('/delete_all', { method: 'POST' });
 	checkForUpdates();
 }
+
+
+document.getElementById('image').addEventListener('change', function() {
+	document.getElementById('image-name').textContent = this.files[0].name;
+});
+
+document.getElementById('video').addEventListener('change', function() {
+	document.getElementById('video-name').textContent = this.files[0].name;
+});
+
+document.getElementById('file').addEventListener('change', function() {
+	document.getElementById('file-name').textContent = this.files[0].name;
+});
 
 window.onload = function() {
 	checkForUpdates();

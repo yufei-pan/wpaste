@@ -7,9 +7,10 @@ import random
 import json
 import TSVZ
 import imghdr
+import filetype
 
 app = Flask(__name__)
-BASE_DIR = './messages/'
+BASE_DIR = 'messages/'
 
 version = '1.0.0'
 
@@ -44,31 +45,21 @@ def validate_image(stream):
         return None
     return '.' + (format if format != 'jpeg' else 'jpg')
 
+def validate_video(stream):
+    kind = filetype.guess(stream)
+    if kind is None:
+        return None
+    if kind.mime.startswith('video/'):
+        return kind.extension
+    return None
 
-mainIndex = TSVZ.TSVZed('mainIndex.tsv',header = ['id','unix_time','path','type'],rewrite_interval=3600 * 20,verbose=False)
+
+mainIndex = TSVZ.TSVZed('mainIndex.tsv',header = ['id','unix_time','path','type','filename'],rewrite_interval=3600 * 20,verbose=False)
 
 @app.route('/')
 def index():
     return render_template('index.html')
 
-# @app.route('/message', methods=['POST'])
-# def post_message():
-#     message = request.form['message']
-#     today = datetime.now().strftime("%Y-%m-%d")
-#     dir_path = os.path.join(BASE_DIR, today)
-    
-#     if not os.path.exists(dir_path):
-#         os.makedirs(dir_path)
-    
-#     file_id = generate_random_id()
-#     file_name = f"{file_id}.txt"
-#     file_path = os.path.join(dir_path, file_name)
-    
-#     with open(file_path, 'w') as file:
-#         file.write(message)
-#     mainIndex[file_id] = [str(datetime.now().timestamp()),file_path]
-    
-#     return jsonify({"success": True, "message": "Message saved successfully."})
 @app.route('/message', methods=['POST'])
 def post_message():
     message = request.form['message']
@@ -83,7 +74,7 @@ def post_message():
         file_path = os.path.join(dir_path, f"{file_id}.txt")
         with open(file_path, 'w') as file:
             file.write(message)
-        mainIndex[file_id] = [str(datetime.now().timestamp()), file_path, 'text']
+        mainIndex[file_id] = [str(datetime.now().timestamp()), file_path, 'text', f"{file_id}.txt"]
 
     # Handle image upload
     if 'image' in request.files:
@@ -94,7 +85,28 @@ def post_message():
             if image_extension:
                 file_path = os.path.join(dir_path, f"{file_id}{image_extension}")
                 image.save(file_path)
-                mainIndex[file_id] = [str(datetime.now().timestamp()), file_path, 'image']
+                mainIndex[file_id] = [str(datetime.now().timestamp()), file_path, 'image',image.filename]
+
+    # Handle video upload
+    if 'video' in request.files:
+        file_id = generate_random_id()
+        video = request.files['video']
+        if video.filename != '':
+            video_extension = validate_video(video.stream)
+            if video_extension:
+                file_path = os.path.join(dir_path, f"{file_id}{video_extension}")
+                video.save(file_path)
+                mainIndex[file_id] = [str(datetime.now().timestamp()), file_path, 'video',video.filename]
+    
+    # Handle general file upload
+    if 'file' in request.files:
+        file_id = generate_random_id()
+        file = request.files['file']
+        if file.filename != '':
+            file_extension = os.path.splitext(file.filename)[1]
+            file_path = os.path.join(dir_path, f"{file_id}{file_extension}")
+            file.save(file_path)
+            mainIndex[file_id] = [str(datetime.now().timestamp()), file_path, 'file',file.filename]
 
     update_last_modified()  # Update last modified time
     return jsonify({"success": True, "message": "Message saved successfully."})
@@ -108,17 +120,23 @@ def get_last_update():
 #     {
 #       "id": 1,
 #       "content": "Welcome to our service!",
-#       "timestamp": 1632096000
+#       "timestamp": 1632096000,
+#       "type": "text",
+#       "file_name": "file.txt"
 #     },
 #     {
 #       "id": 2,
 #       "content": "Your appointment is confirmed for tomorrow.",
 #       "timestamp": 1632182400
+#       "type": "image",
+#       "file_name": "image.jpg"
 #     },
 #     {
 #       "id": 3,
 #       "content": "System maintenance is scheduled for this weekend.",
 #       "timestamp": 1632268800
+#       "type": "video",
+#       "file_name": "video.mp4"
 #     }
 #   ]
 # }
@@ -136,25 +154,31 @@ def get_messages():
                 elif mainIndex[id][3] == 'text':
                     with open(mainIndex[id][2], 'r') as file:
                         content = file.read()
+                elif mainIndex[id][3] == 'video':
+                    content = f'/video/{id}'
+                elif mainIndex[id][3] == 'file':
+                    content = f'/file/{id}'
                 else:
                     content = "Content type not supported."
             else:
                 content = "Message not found."
-            messages.append({"id": id, "content": content, "timestamp": int(float(mainIndex[id][1])), "type": mainIndex[id][3]})
+            messages.append({"id": id, "content": content, "timestamp": int(float(mainIndex[id][1])), "type": mainIndex[id][3], "filename": mainIndex[id][4]})
     messages.reverse()
     return jsonify({"messages": messages})
 
 @app.route('/image/<message_id>', methods=['GET'])
-def get_image(message_id):
+@app.route('/video/<message_id>', methods=['GET'])
+@app.route('/file/<message_id>', methods=['GET'])
+def get_file(message_id):
     if message_id in mainIndex:
-        if mainIndex[message_id][3] == 'image':
-            file_path = mainIndex[message_id][2]
-            if os.path.exists(file_path):
-                return send_file(file_path)  # Directly send the image file
-            else:
-                abort(404, description="Image not found.")  # Return 404 error for not found
+        file_path = mainIndex[message_id][2]
+        # check if file_path is under BASE_DIR
+        if os.path.commonpath([BASE_DIR, file_path]) != os.path.normpath(BASE_DIR):
+            abort(404, description="Path not valid.")  # Return 404 error for invalid paths
+        if os.path.exists(file_path):
+            return send_file(file_path)  # Directly send the file
         else:
-            abort(400, description="Message is not an image.")  # Return 400 error for bad request
+            abort(404, description="File not found.")  # Return 404 error for not found
     else:
         abort(404, description="Message not found.")  # Return 404 error for not found
 

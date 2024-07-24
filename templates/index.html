@@ -22,13 +22,28 @@
         - Messages are automatically updated every 5 seconds.
 
     </p>
-    <form id="messageForm" enctype="multipart/form-data">
-        <textarea id="message" name="message" placeholder="Type your message here..." rows="4" cols="50"></textarea>
-        <br>
+<form id="messageForm" enctype="multipart/form-data">
+    <textarea id="message" name="message" placeholder="Type your message here..." rows="4" cols="50"></textarea>
+    <br>
+    <div class="file-upload">
+        <label for="image">Images</label>
         <input type="file" id="image" name="image" accept="image/*">
-        <br>
-        <button type="submit">Send Message</button>
-    </form>
+        <span id="image-name"></span>
+    </div>
+    <div class="file-upload">
+        <label for="video">Videos</label>
+        <input type="file" id="video" name="video" accept="video/*">
+        <span id="video-name"></span>
+    </div>
+    <div class="file-upload">
+        <label for="file">Other Files</label>
+        <input type="file" id="file" name="file" accept="*/*">
+        <span id="file-name"></span>
+    </div>
+    <br>
+    <button type="submit">Send Message</button>
+    <button type="button" id="clearButton">Clear</button>
+</form>
     
 
     <h3>Messages</h3>

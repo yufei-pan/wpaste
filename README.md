@@ -1,5 +1,8 @@
 A simple web paste application.
 
+
+pip install -r requirements.txt
+
 ![screenshot1](/etc/Screenshot 2024-05-01 145831.png)
 
 Currently support:
