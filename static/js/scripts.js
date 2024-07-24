@@ -17,20 +17,43 @@ document.getElementById('messageForm').addEventListener('submit', async function
 	const message = document.getElementById('message').value;
 	const formData = new FormData(this);
 	formData.append('message', message);
-	
-	const response = await fetch('/message', {
-		method: 'POST',
-		body: formData,
+
+	const xhr = new XMLHttpRequest();
+	xhr.open('POST', '/message', true);
+
+	xhr.upload.addEventListener('progress', function(e) {
+		if (e.lengthComputable) {
+			const percentComplete = (e.loaded / e.total) * 100;
+			const uploadProgress = document.getElementById('uploadProgress');
+			uploadProgress.textContent = `Upload progress: ${percentComplete.toFixed(2)}%`;
+			uploadProgress.className = 'uploading';
+			document.getElementById('progressBar').style.width = `${percentComplete}%`;
+		}
 	});
 
-	const result = await response.json();
-	//alert(result.message);
-	document.getElementById('message').value = '';
-	document.getElementById('image-name').textContent = '';
-	document.getElementById('video-name').textContent = '';
-	document.getElementById('file-name').textContent = '';
-	checkForUpdates();
+	xhr.onload = function() {
+		const uploadProgress = document.getElementById('uploadProgress');
+		if (xhr.status === 200) {
+			const result = JSON.parse(xhr.responseText);
+			document.getElementById('messageForm').reset();
+			document.getElementById('message').value = '';
+			document.getElementById('image-name').textContent = '';
+			document.getElementById('video-name').textContent = '';
+			document.getElementById('file-name').textContent = '';
+			uploadProgress.textContent = 'Upload complete';
+			uploadProgress.className = 'upload-complete';
+			document.getElementById('progressBar').style.width = '0%';
+			checkForUpdates();
+		} else {
+			uploadProgress.textContent = 'Upload failed';
+			uploadProgress.className = 'upload-failed';
+			document.getElementById('progressBar').style.width = '0%';
+		}
+	};
+
+	xhr.send(formData);
 });
+
 
 document.getElementById('clearButton').addEventListener('click', function() {
     document.getElementById('messageForm').reset(); // Reset the form
@@ -108,15 +131,9 @@ async function fetchMessages() {
 			messageElement.appendChild(video);
 			contentToCopy = video; // Video element for copying.
 		} else if (message.type === 'file') {
-			// Also print the file name if available
-			if (message.filename) {
-				const fileName = document.createElement('p');
-				fileName.textContent = message.filename;
-				messageElement.appendChild(fileName);
-			}
 			const a = document.createElement('a');
 			a.href = message.content;
-			a.textContent = message.content;
+			a.textContent = message.filename || 'Download File';
 			a.download = ''; // Optional: set a.download to a specific filename if necessary
 			messageElement.appendChild(a);
 			contentToCopy = a; // Link element for copying.
