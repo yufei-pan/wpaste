@@ -97,6 +97,16 @@ button:active {
     box-shadow: 0 0.125em 0.25em rgba(0,0,0,0.15); /* Adding a light shadow for depth */
 }
 
+
+.message video {
+	max-width: 100%; /* Ensure videos are not wider than their container */
+	height: auto; /* Maintain aspect ratio */
+	display: block; /* Remove extra space below the video */
+	margin: 1em auto; /* Centering video and providing some margin */
+	border-radius: 0.25em; /* Slightly rounded corners for a softer look */
+	box-shadow: 0 0.125em 0.25em rgba(0,0,0,0.15); /* Adding a light shadow for depth */
+}
+
 /* Links within messages */
 .message a {
     margin: 1em 2em;
@@ -195,4 +205,16 @@ button:active {
 }
 .upload-failed {
     color: #e57373; /* Deeper pastel red */
+}
+
+.toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(0,0,0,0.7);
+    color: white;
+    padding: 10px 20px;
+    border-radius: 5px;
+    z-index: 1000;
 }

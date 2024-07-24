@@ -11,8 +11,10 @@ import filetype
 
 app = Flask(__name__)
 BASE_DIR = 'messages/'
+RETENTION_SIZE = 1024 * 1024 * 50 # 50MB, delete files bigger than this size when deleting
+RETENTION_TIME = 4 * 3600 # 4 hours, delete files older than this time when deleting
 
-version = '1.0.0'
+version = '1.3.5'
 
 #TODO: add feature: copy from the webpage should be easier : ctrl c copy the last message , add a copy to clipboard button to messages
 #TODO: add periodic update / event based update to the webpage
@@ -145,7 +147,7 @@ def get_messages():
     messages = []
     for id in mainIndex:
         # if message is older than 2 hours, mark it for deletion
-        if datetime.now().timestamp() - float(mainIndex[id][1]) > 7200:
+        if datetime.now().timestamp() - float(mainIndex[id][1]) > RETENTION_TIME:
             delete_message(id)
         else:
             if os.path.exists(mainIndex[id][2]):
@@ -170,13 +172,21 @@ def get_messages():
 @app.route('/video/<message_id>', methods=['GET'])
 @app.route('/file/<message_id>', methods=['GET'])
 def get_file(message_id):
+    # remove the extension from the message_id if they included one
+    message_id = os.path.splitext(message_id)[0]
     if message_id in mainIndex:
         file_path = mainIndex[message_id][2]
         # check if file_path is under BASE_DIR
         if os.path.commonpath([BASE_DIR, file_path]) != os.path.normpath(BASE_DIR):
             abort(404, description="Path not valid.")  # Return 404 error for invalid paths
         if os.path.exists(file_path):
-            return send_file(file_path)  # Directly send the file
+            #return send_file(file_path)  # Directly send the file
+            # try to the the mimetype
+            mime = filetype.guess(file_path)
+            if mime is not None:
+                return send_file(file_path, mimetype=mime.mime)
+            else:
+                return send_file(file_path)
         else:
             abort(404, description="File not found.")  # Return 404 error for not found
     else:
@@ -202,7 +212,12 @@ def delete_message(message_id):
         old_file_path = mainIndex[message_id][2]
         new_file_path = f"{old_file_path}.deleted"
         if os.path.exists(old_file_path):
-            os.rename(old_file_path, new_file_path)
+            # check if it is being used currently
+            # if the file is bigger than retension size, delete it
+            if os.path.getsize(old_file_path) > RETENTION_SIZE:
+                os.remove(old_file_path)
+            else:
+                os.rename(old_file_path, new_file_path)
         else:
             print(f"File not found: {old_file_path}")
         print(f"Message {mainIndex.pop(message_id)} deleted successfully.")

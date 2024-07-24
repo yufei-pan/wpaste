@@ -89,6 +89,7 @@ async function fetchMessages() {
 	result.messages.forEach((message) => {
 		const messageElement = document.createElement('div');
 		messageElement.classList.add('message');
+		messageElement.id = `message-${message.id}`;
 
 		let contentToCopy = ''; // This will store the text or image element.
 
@@ -228,6 +229,21 @@ function copyToClipboard(element) {
 		document.execCommand('copy');
 		selection.removeAllRanges();
 		showToast('HTML copied to clipboard!');
+	} else if (element.tagName === 'A') {
+		navigator.clipboard.writeText(element.href).then(() => {
+			showToast('Link copied to clipboard!');
+		}, (err) => {
+			showToast('Failed to copy link: ' + err);
+		});
+	} else if (element.tagName === 'VIDEO') {
+		// copy the video URL to the clipboard
+		navigator.clipboard.writeText(element.src).then(() => {
+			showToast('Video URL copied to clipboard!');
+		}, (err) => {
+			showToast('Failed to copy video URL: ' + err);
+		});
+	} else {
+		showToast('Unsupported content!');
 	}
 }
 
@@ -254,21 +270,13 @@ document.addEventListener('copy', function(e) {
 });
 
 function showToast(message) {
-	const toast = document.createElement('div');
-	toast.textContent = message;
-	toast.style.position = 'fixed';
-	toast.style.bottom = '20px';
-	toast.style.left = '50%';
-	toast.style.transform = 'translateX(-50%)';
-	toast.style.backgroundColor = 'rgba(0,0,0,0.7)';
-	toast.style.color = 'white';
-	toast.style.padding = '10px 20px';
-	toast.style.borderRadius = '5px';
-	toast.style.zIndex = '1000';
-	document.body.appendChild(toast);
-	setTimeout(() => {
-		document.body.removeChild(toast);
-	}, 3000); // The toast message disappears after 3 seconds.
+    const toast = document.createElement('div');
+    toast.textContent = message;
+    toast.className = 'toast';
+    document.body.appendChild(toast);
+    setTimeout(() => {
+        document.body.removeChild(toast);
+    }, 3000); // The toast message disappears after 3 seconds.
 }
 
 document.body.addEventListener('paste', async function(e) {
