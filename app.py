@@ -87,18 +87,25 @@ def post_message():
             if image_extension:
                 file_path = os.path.join(dir_path, f"{file_id}{image_extension}")
                 image.save(file_path)
+                print(f"Image saved to {file_path}")
                 mainIndex[file_id] = [str(datetime.now().timestamp()), file_path, 'image',image.filename]
+            else:
+                return jsonify({"success": False, "message": "Invalid image file."})
 
     # Handle video upload
     if 'video' in request.files:
         file_id = generate_random_id()
         video = request.files['video']
         if video.filename != '':
-            video_extension = validate_video(video.stream)
+            #video_extension = validate_video(video.stream)
+            video_extension = os.path.splitext(video.filename)[1]
             if video_extension:
                 file_path = os.path.join(dir_path, f"{file_id}{video_extension}")
                 video.save(file_path)
+                print(f"Video saved to {file_path}")
                 mainIndex[file_id] = [str(datetime.now().timestamp()), file_path, 'video',video.filename]
+            else:
+                return jsonify({"success": False, "message": "Invalid video file."})
     
     # Handle general file upload
     if 'file' in request.files:
@@ -108,7 +115,9 @@ def post_message():
             file_extension = os.path.splitext(file.filename)[1]
             file_path = os.path.join(dir_path, f"{file_id}{file_extension}")
             file.save(file_path)
+            print(f"File saved to {file_path}")
             mainIndex[file_id] = [str(datetime.now().timestamp()), file_path, 'file',file.filename]
+
 
     update_last_modified()  # Update last modified time
     return jsonify({"success": True, "message": "Message saved successfully."})
