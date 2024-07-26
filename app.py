@@ -126,31 +126,6 @@ def post_message():
 def get_last_update():
     return jsonify({"last_update": last_update_time})
 
-# {
-#   "messages": [
-#     {
-#       "id": 1,
-#       "content": "Welcome to our service!",
-#       "timestamp": 1632096000,
-#       "type": "text",
-#       "file_name": "file.txt"
-#     },
-#     {
-#       "id": 2,
-#       "content": "Your appointment is confirmed for tomorrow.",
-#       "timestamp": 1632182400
-#       "type": "image",
-#       "file_name": "image.jpg"
-#     },
-#     {
-#       "id": 3,
-#       "content": "System maintenance is scheduled for this weekend.",
-#       "timestamp": 1632268800
-#       "type": "video",
-#       "file_name": "video.mp4"
-#     }
-#   ]
-# }
 @app.route('/messages', methods=['GET'])
 def get_messages():
     messages = []
