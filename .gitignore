@@ -5,5 +5,6 @@ __pycache__/
 # Ignore all files and directories under 'messages'
 messages/
 
+TSVZ.py
 test.tsv
 mainIndex.tsv
