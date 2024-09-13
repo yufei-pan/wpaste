@@ -14,7 +14,7 @@ BASE_DIR = 'messages/'
 RETENTION_SIZE = 1024 * 1024 * 50 # 50MB, delete files bigger than this size when deleting
 RETENTION_TIME = 4 * 3600 # 4 hours, delete files older than this time when deleting
 
-version = '1.3.5'
+version = '1.3.6'
 
 #TODO: add feature: copy from the webpage should be easier : ctrl c copy the last message , add a copy to clipboard button to messages
 #TODO: add periodic update / event based update to the webpage
@@ -129,10 +129,11 @@ def get_last_update():
 @app.route('/messages', methods=['GET'])
 def get_messages():
     messages = []
+    message_to_delete = []
     for id in mainIndex:
         # if message is older than 2 hours, mark it for deletion
         if datetime.now().timestamp() - float(mainIndex[id][1]) > RETENTION_TIME:
-            delete_message(id)
+            message_to_delete.append(id)
         else:
             if os.path.exists(mainIndex[id][2]):
                 if mainIndex[id][3] == 'image':
@@ -150,6 +151,8 @@ def get_messages():
                 content = "Message not found."
             messages.append({"id": id, "content": content, "timestamp": int(float(mainIndex[id][1])), "type": mainIndex[id][3], "filename": mainIndex[id][4]})
     messages.reverse()
+    for id in message_to_delete:
+        delete_message(id)
     return jsonify({"messages": messages})
 
 @app.route('/image/<message_id>', methods=['GET'])
