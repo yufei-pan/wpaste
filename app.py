@@ -14,7 +14,7 @@ BASE_DIR = 'messages/'
 RETENTION_SIZE = 1024 * 1024 * 50 # 50MB, delete files bigger than this size when deleting
 RETENTION_TIME = 4 * 3600 # 4 hours, delete files older than this time when deleting
 
-version = '1.3.6'
+version = '1.3.7'
 
 #TODO: add feature: copy from the webpage should be easier : ctrl c copy the last message , add a copy to clipboard button to messages
 #TODO: add periodic update / event based update to the webpage
@@ -30,6 +30,15 @@ last_update_time = time.time_ns()
 def update_last_modified():
     global last_update_time
     last_update_time = time.time_ns()
+
+# print with flush on
+from functools import partial
+print = partial(print, flush=True)
+# def print(*args, **kwargs):
+# 	'''Print with flush=True by default.'''
+# 	kwargs.setdefault('flush', True)
+# 	__builtins__.print(*args, **kwargs)
+
 
 def generate_random_id(length=8):
     letters = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz123456789'
