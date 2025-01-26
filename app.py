@@ -6,7 +6,7 @@ import os
 import random
 import json
 import TSVZ
-import imghdr
+#import imghdr
 import filetype
 
 app = Flask(__name__)
@@ -14,7 +14,7 @@ BASE_DIR = 'messages/'
 RETENTION_SIZE = 1024 * 1024 * 50 # 50MB, delete files bigger than this size when deleting
 RETENTION_TIME = 4 * 3600 # 4 hours, delete files older than this time when deleting
 
-version = '1.3.7'
+version = '1.3.8'
 
 #TODO: add feature: copy from the webpage should be easier : ctrl c copy the last message , add a copy to clipboard button to messages
 #TODO: add periodic update / event based update to the webpage
@@ -51,10 +51,17 @@ def generate_random_id(length=8):
 def validate_image(stream):
     header = stream.read(512)  # 512 bytes should be enough for a header check
     stream.seek(0)  # Reset stream pointer
-    format = imghdr.what(None, header)
-    if not format:
+    #format = imghdr.what(None, header)
+    # imghdr had been deprecated, use filetype instead
+    # if not format:
+    #     return None
+    # return '.' + (format if format != 'jpeg' else 'jpg')
+    kind = filetype.guess(header)
+    if kind is None:
         return None
-    return '.' + (format if format != 'jpeg' else 'jpg')
+    if kind.mime.startswith('image/'):
+        return kind.extension
+    return None
 
 def validate_video(stream):
     kind = filetype.guess(stream)
@@ -65,6 +72,7 @@ def validate_video(stream):
     return None
 
 
+
 mainIndex = TSVZ.TSVZed('mainIndex.tsv',header = ['id','unix_time','path','type','filename'],rewrite_interval=3600 * 20,verbose=False)
 
 @app.route('/')
@@ -73,12 +81,14 @@ def index():
 
 @app.route('/message', methods=['POST'])
 def post_message():
-    message = request.form['message']
+    message = ''
+    if 'message' in request.form:
+        message = request.form['message']
     today = datetime.now().strftime("%Y-%m-%d")
     dir_path = os.path.join(BASE_DIR, today)
 
     if not os.path.exists(dir_path):
-        os.makedirs(dir_path)
+        os.makedirs(dir_path,exist_ok=True)
     
     if message.strip():
         file_id = generate_random_id()
@@ -180,9 +190,9 @@ def get_file(message_id):
             # try to the the mimetype
             mime = filetype.guess(file_path)
             if mime is not None:
-                return send_file(file_path, mimetype=mime.mime)
+                return send_file(file_path, mimetype=mime.mime,download_name=mainIndex[message_id][4])
             else:
-                return send_file(file_path)
+                return send_file(file_path,download_name=mainIndex[message_id][4])
         else:
             abort(404, description="File not found.")  # Return 404 error for not found
     else:

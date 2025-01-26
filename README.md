@@ -23,6 +23,9 @@ Delete messages manually
 
 Delete ALL
 
+you can run it via tools like gunicorn:
+gunicorn app:app
+
 TODO: ADD user session support to allow private copy paste boards.
 
 
