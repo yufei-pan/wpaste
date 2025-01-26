@@ -1,7 +1,18 @@
 A simple web paste application.
 
+install via
 
+```bash
 pip install -r requirements.txt
+flask run
+```
+
+If you want a more production server,
+I use gunicorn:
+```bash
+pip install gunicorn
+gunicorn app:app
+```
 
 ![screenshot1](/etc/Screenshot 2024-05-01 145831.png)
 
@@ -22,9 +33,6 @@ Select file
 Delete messages manually
 
 Delete ALL
-
-you can run it via tools like gunicorn:
-gunicorn app:app
 
 TODO: ADD user session support to allow private copy paste boards.
 

@@ -1,4 +1,4 @@
-#!/usr/bin/env python3.11
+#!/usr/bin/env python3
 from flask import Flask, request, jsonify, render_template, send_file, abort
 from datetime import datetime, timedelta
 import time
