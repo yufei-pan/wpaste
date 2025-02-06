@@ -78,176 +78,162 @@ function isHTML(str) {
 	return bodyHasNodes || headHasNodes;
 }
 
-// ======== UPDATED fetchMessages FUNCTION ========
 async function fetchMessages() {
-	const response = await fetch('/messages');
-	const result = await response.json();
-	const messagesDiv = document.getElementById('messages');
-	messagesDiv.innerHTML = '';
+    const response = await fetch('/messages');
+    const result = await response.json();
+    const messagesDiv = document.getElementById('messages');
+    messagesDiv.innerHTML = '';
 
-	result.messages.forEach((message) => {
-		const messageElement = document.createElement('div');
-		messageElement.classList.add('message');
-		messageElement.id = `message-${message.id}`;
+    result.messages.forEach((message) => {
+        const messageElement = document.createElement('div');
+        messageElement.classList.add('message');
+        messageElement.id = `message-${message.id}`;
 
-		let contentToCopy = null;       // Will store the text or image element for "copy"
-		let contentElementRef = null;   // Keep a reference so we can toggle raw vs rendered
+        let contentToCopy = null;       // Will store the text or image element for "copy"
+        let contentElementRef = null;   // Reference so we can toggle raw vs rendered
 
-		// Create a container to hold the content
-		const contentContainer = document.createElement('div');
-		contentContainer.classList.add('content-container');
+        // Create a container for the message content
+        const contentContainer = document.createElement('div');
+        contentContainer.classList.add('content-container');
 
-		if (message.type === 'text') {
-			const isMessageHTML = isHTML(message.content);
-			
-			// We'll create both a sanitized HTML representation (if it's HTML)
-			// and a <pre> element containing the raw text. Then default to showing
-			// whichever representation you want (HTML or text).
-			
-			const rawPre = document.createElement('pre');
-			rawPre.textContent = message.content;  // The raw content
-			
-			if (isMessageHTML) {
-				// If HTML, create a sanitized container
-				const sanitizedDiv = document.createElement('div');
-				const sanitizedHTML = DOMPurify.sanitize(message.content);
-				sanitizedDiv.innerHTML = sanitizedHTML;
-				// We will show the sanitized version by default
-				contentElementRef = sanitizedDiv;
-				contentContainer.appendChild(sanitizedDiv);
-			} else {
-				// If it's not HTML, just show it in a <pre>
-				contentElementRef = rawPre;
-				contentContainer.appendChild(rawPre);
-			}
-			
-			// Add a "Show Raw" toggle button for text messages
-			const showRawButton = document.createElement('button');
-			showRawButton.textContent = isMessageHTML ? 'Show Raw' : 'Show Rendered';
-			showRawButton.classList.add('show-raw-button');
+        if (message.type === 'text') {
+            const isMessageHTML = isHTML(message.content);
 
-			// We'll store the current state in a data attribute
-			// true -> currently showing sanitized HTML
-			// false -> currently showing <pre> (raw)
-			// If it's NOT HTML, then we start out in "raw" mode, so we set false.
-			messageElement.setAttribute('data-show-raw', isMessageHTML ? 'false' : 'true');
+            const rawPre = document.createElement('pre');
+            rawPre.textContent = message.content; // The raw content
 
-			showRawButton.onclick = function() {
-				const isCurrentlyRaw = (messageElement.getAttribute('data-show-raw') === 'true');
-				
-				// If currently raw => switch to sanitized HTML
-				if (isCurrentlyRaw && isMessageHTML) {
-					// Create new sanitized element
-					const sanitizedDiv = document.createElement('div');
-					const sanitizedHTML = DOMPurify.sanitize(message.content);
-					sanitizedDiv.innerHTML = sanitizedHTML;
-					
-					// Replace the old content with sanitized content
-					contentContainer.replaceChild(sanitizedDiv, contentElementRef);
-					contentElementRef = sanitizedDiv;
-					
-					// Update the data-show-raw attribute
-					messageElement.setAttribute('data-show-raw', 'false');
-					showRawButton.textContent = 'Show Raw';
-				} 
-				// If currently sanitized => switch to raw (pre)
-				else if (!isCurrentlyRaw && isMessageHTML) {
-					const preElement = document.createElement('pre');
-					preElement.textContent = message.content;
-					
-					// Replace the old content with raw content
-					contentContainer.replaceChild(preElement, contentElementRef);
-					contentElementRef = preElement;
-					
-					messageElement.setAttribute('data-show-raw', 'true');
-					showRawButton.textContent = 'Show Rendered';
-				}
-			};
+            if (isMessageHTML) {
+                // If HTML, create a sanitized container
+                const sanitizedDiv = document.createElement('div');
+                const sanitizedHTML = DOMPurify.sanitize(message.content);
+                sanitizedDiv.innerHTML = sanitizedHTML;
+                contentElementRef = sanitizedDiv;  // We'll show the sanitized version by default
+                contentContainer.appendChild(sanitizedDiv);
+            } else {
+                // If it's not HTML, just show it in a <pre>
+                contentElementRef = rawPre;
+                contentContainer.appendChild(rawPre);
+            }
+            
+            // For the copyToClipboard function, we'll use whichever element is currently displayed
+            contentToCopy = contentElementRef;
 
-			// Append the showRawButton only if it was identified as HTML
-			// If you want the button to appear for all text, you can remove the check below:
-			if (isMessageHTML) {
-				contentContainer.appendChild(showRawButton);
-			}
+        } else if (message.type === 'image') {
+            if (message.filename && message.filename !== 'image.png') {
+                const imgName = document.createElement('p');
+                imgName.textContent = message.filename;
+                contentContainer.appendChild(imgName);
+            }
+            const img = document.createElement('img');
+            img.src = message.content;
+            img.style.maxWidth = '100%';
+            contentContainer.appendChild(img);
+            contentElementRef = img;
+            contentToCopy = img;
 
-			// For the copyToClipboard function, we’ll use the currently displayed element
-			contentToCopy = contentElementRef;
-		} 
-		else if (message.type === 'image') {
-			// Also print the image filename if available and not image.png
-			if (message.filename && message.filename !== 'image.png') {
-				const imgName = document.createElement('p');
-				imgName.textContent = message.filename;
-				contentContainer.appendChild(imgName);
-			}
-			const img = document.createElement('img');
-			img.src = message.content;
-			img.style.maxWidth = '100%';
-			contentContainer.appendChild(img);
-			contentElementRef = img;
-			contentToCopy = img; // Image element for copying.
-		} 
-		else if (message.type === 'video') {
-			// Also print the video filename if available
-			if (message.filename) {
-				const videoName = document.createElement('p');
-				videoName.textContent = message.filename;
-				contentContainer.appendChild(videoName);
-			}
-			const video = document.createElement('video');
-			video.src = message.content;
-			video.controls = true;
-			video.style.maxWidth = '100%';
-			contentContainer.appendChild(video);
-			contentElementRef = video;
-			contentToCopy = video; // Video element for copying.
-		} 
-		else if (message.type === 'file') {
-			const a = document.createElement('a');
-			a.href = message.content;
-			a.textContent = message.filename || 'Download File';
-			a.download = ''; // Optional: set a.download to a specific filename if necessary
-			contentContainer.appendChild(a);
-			contentElementRef = a;
-			contentToCopy = a; // Link element for copying.
-		} 
-		else {
-			console.error('Unknown message type:', message.type);
-			const pre = document.createElement('pre');
-			pre.textContent = 'Unknown message type';
-			contentContainer.appendChild(pre);
-			contentElementRef = pre;
-			contentToCopy = pre; // Fallback to plain text.
-		}
+        } else if (message.type === 'video') {
+            if (message.filename) {
+                const videoName = document.createElement('p');
+                videoName.textContent = message.filename;
+                contentContainer.appendChild(videoName);
+            }
+            const video = document.createElement('video');
+            video.src = message.content;
+            video.controls = true;
+            video.style.maxWidth = '100%';
+            contentContainer.appendChild(video);
+            contentElementRef = video;
+            contentToCopy = video;
 
-		// Append the container for the message content
-		messageElement.appendChild(contentContainer);
+        } else if (message.type === 'file') {
+            const a = document.createElement('a');
+            a.href = message.content;
+            a.textContent = message.filename || 'Download File';
+            a.download = '';
+            contentContainer.appendChild(a);
+            contentElementRef = a;
+            contentToCopy = a;
 
-		// Add date/time
-		const dateTime = document.createElement('p');
-		const date = new Date(message.timestamp * 1000);
-		dateTime.textContent = `Time: ${date.toDateString()} ${date.toTimeString()}`;
-		messageElement.appendChild(dateTime);
+        } else {
+            console.error('Unknown message type:', message.type);
+            const pre = document.createElement('pre');
+            pre.textContent = 'Unknown message type';
+            contentContainer.appendChild(pre);
+            contentElementRef = pre;
+            contentToCopy = pre;
+        }
 
-		// Copy button
-		const copyButton = document.createElement('button');
-		copyButton.textContent = 'Copy to Clipboard';
-		copyButton.classList.add('copy-button');
-		copyButton.onclick = function() { copyToClipboard(contentToCopy); };
-		messageElement.appendChild(copyButton);
+        messageElement.appendChild(contentContainer);
 
-		// Delete button
-		const deleteButton = document.createElement('button');
-		deleteButton.textContent = 'Delete';
-		deleteButton.classList.add('delete-button');
-		deleteButton.onclick = function() { deleteMessage(message.id); };
-		messageElement.appendChild(deleteButton);
+        // Show time info
+        const dateTime = document.createElement('p');
+        const date = new Date(message.timestamp * 1000);
+        dateTime.textContent = `Time: ${date.toDateString()} ${date.toTimeString()}`;
+        messageElement.appendChild(dateTime);
 
-		// Finally, add this entire message element to the messagesDiv
-		messagesDiv.appendChild(messageElement);
-	});
+        // ---- CREATE A BUTTONS CONTAINER SO WE CAN LINE THEM UP ----
+        const buttonsContainer = document.createElement('div');
+        buttonsContainer.classList.add('buttons-container'); 
+        // You can style this class in CSS (e.g., display: inline-flex; gap: 8px; etc.)
+
+        // Copy button
+        const copyButton = document.createElement('button');
+        copyButton.textContent = 'Copy to Clipboard';
+        copyButton.classList.add('copy-button');
+        copyButton.onclick = function() { copyToClipboard(contentToCopy); };
+        buttonsContainer.appendChild(copyButton);
+
+        // Delete button
+        const deleteButton = document.createElement('button');
+        deleteButton.textContent = 'Delete';
+        deleteButton.classList.add('delete-button');
+        deleteButton.onclick = function() { deleteMessage(message.id); };
+        buttonsContainer.appendChild(deleteButton);
+
+        // (Optional) If it's text AND recognized as HTML, add a "Show Raw" button
+        if (message.type === 'text' && isHTML(message.content)) {
+            // Create the "Show Raw" button
+            const showRawButton = document.createElement('button');
+            showRawButton.textContent = 'Show Raw';
+            showRawButton.classList.add('show-raw-button');
+            messageElement.setAttribute('data-show-raw', 'false'); 
+            // false => currently showing sanitized HTML
+
+            showRawButton.onclick = function() {
+                const isCurrentlyRaw = (messageElement.getAttribute('data-show-raw') === 'true');
+                
+                if (isCurrentlyRaw) {
+                    // Switch to sanitized HTML
+                    const sanitizedDiv = document.createElement('div');
+                    const sanitizedHTML = DOMPurify.sanitize(message.content);
+                    sanitizedDiv.innerHTML = sanitizedHTML;
+                    contentContainer.replaceChild(sanitizedDiv, contentElementRef);
+                    contentElementRef = sanitizedDiv;
+                    messageElement.setAttribute('data-show-raw', 'false');
+                    showRawButton.textContent = 'Show Raw';
+                } else {
+                    // Switch to raw <pre>
+                    const preElement = document.createElement('pre');
+                    preElement.textContent = message.content;
+                    contentContainer.replaceChild(preElement, contentElementRef);
+                    contentElementRef = preElement;
+                    messageElement.setAttribute('data-show-raw', 'true');
+                    showRawButton.textContent = 'Show Rendered';
+                }
+            };
+
+            // Add the showRawButton to the same container
+            buttonsContainer.appendChild(showRawButton);
+        }
+
+        // Finally, append the buttons container to the message element
+        messageElement.appendChild(buttonsContainer);
+
+        // Append the entire message to the messages div
+        messagesDiv.appendChild(messageElement);
+    });
 }
-// ======== END OF UPDATED fetchMessages FUNCTION ========
+
 
 function copyToClipboard(element) {
 	if (!element) {
