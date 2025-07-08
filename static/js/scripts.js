@@ -442,15 +442,18 @@ async function deleteAllMessages() {
 }
 
 document.getElementById('image').addEventListener('change', function() {
-	document.getElementById('image-name').textContent = this.files[0].name;
+	const fileNames = Array.from(this.files).map(file => file.name).join('; ');
+	document.getElementById('image-name').textContent = fileNames;
 });
 
 document.getElementById('video').addEventListener('change', function() {
-	document.getElementById('video-name').textContent = this.files[0].name;
+	const fileNames = Array.from(this.files).map(file => file.name).join('; ');
+	document.getElementById('video-name').textContent = fileNames;
 });
 
 document.getElementById('file').addEventListener('change', function() {
-	document.getElementById('file-name').textContent = this.files[0].name;
+	const fileNames = Array.from(this.files).map(file => file.name).join('; ');
+	document.getElementById('file-name').textContent = fileNames;
 });
 
 window.onload = function() {

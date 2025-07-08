@@ -11,10 +11,10 @@ import filetype
 
 app = Flask(__name__)
 BASE_DIR = 'messages/'
-RETENTION_SIZE = 1024 * 1024 * 50 # 50MB, delete files bigger than this size when deleting
+RETENTION_SIZE = 1024 * 1024 * 100 # 100MB, delete files bigger than this size when deleting
 RETENTION_TIME = 4 * 3600 # 4 hours, delete files older than this time when deleting
 
-version = '1.3.8'
+version = '1.3.9'
 
 #TODO: add feature: copy from the webpage should be easier : ctrl c copy the last message , add a copy to clipboard button to messages
 #TODO: add periodic update / event based update to the webpage
@@ -71,7 +71,25 @@ def validate_video(stream):
         return kind.extension
     return None
 
-
+def __delete_file(message_id):
+    global mainIndex
+    global RETENTION_SIZE
+    if message_id not in mainIndex:
+        print(f"Message {message_id} not found in index.")
+        return
+    # rename file as <orginal_name>.deleted
+    old_file_path = mainIndex[message_id][2]
+    new_file_path = f"{old_file_path}.deleted"
+    if os.path.exists(old_file_path):
+        # check if it is being used currently
+        # if the file is bigger than retension size, delete it
+        if os.path.getsize(old_file_path) > RETENTION_SIZE:
+            os.remove(old_file_path)
+        else:
+            os.rename(old_file_path, new_file_path)
+    else:
+        print(f"File not found: {old_file_path}")
+    print(f"Message {message_id} deleted successfully.")
 
 mainIndex = TSVZ.TSVZed('mainIndex.tsv',header = ['id','unix_time','path','type','filename'],rewrite_interval=3600 * 20,verbose=False)
 
@@ -96,49 +114,53 @@ def post_message():
         with open(file_path, 'w') as file:
             file.write(message)
         mainIndex[file_id] = [str(datetime.now().timestamp()), file_path, 'text', f"{file_id}.txt"]
+        update_last_modified()
 
-    # Handle image upload
+    # Handle image upload - multiple files
     if 'image' in request.files:
-        file_id = generate_random_id()
-        image = request.files['image']
-        if image.filename != '':
-            image_extension = validate_image(image.stream)
-            if image_extension:
-                file_path = os.path.join(dir_path, f"{file_id}{image_extension}")
-                image.save(file_path)
-                print(f"Image saved to {file_path}")
-                mainIndex[file_id] = [str(datetime.now().timestamp()), file_path, 'image',image.filename]
-            else:
-                return jsonify({"success": False, "message": "Invalid image file."})
+        images = request.files.getlist('image')
+        for image in images:
+            if image.filename != '':
+                file_id = generate_random_id()
+                image_extension = validate_image(image.stream)
+                if image_extension:
+                    file_path = os.path.join(dir_path, f"{file_id}.{image_extension}")
+                    image.save(file_path)
+                    print(f"Image saved to {file_path}")
+                    mainIndex[file_id] = [str(datetime.now().timestamp()), file_path, 'image', image.filename]
+                    update_last_modified()
+                else:
+                    return jsonify({"success": False, "message": f"Invalid image file: {image.filename}"})
 
-    # Handle video upload
+    # Handle video upload - multiple files
     if 'video' in request.files:
-        file_id = generate_random_id()
-        video = request.files['video']
-        if video.filename != '':
-            #video_extension = validate_video(video.stream)
-            video_extension = os.path.splitext(video.filename)[1]
-            if video_extension:
-                file_path = os.path.join(dir_path, f"{file_id}{video_extension}")
-                video.save(file_path)
-                print(f"Video saved to {file_path}")
-                mainIndex[file_id] = [str(datetime.now().timestamp()), file_path, 'video',video.filename]
-            else:
-                return jsonify({"success": False, "message": "Invalid video file."})
+        videos = request.files.getlist('video')
+        for video in videos:
+            if video.filename != '':
+                file_id = generate_random_id()
+                video_extension = os.path.splitext(video.filename)[1]
+                if video_extension:
+                    file_path = os.path.join(dir_path, f"{file_id}{video_extension}")
+                    video.save(file_path)
+                    print(f"Video saved to {file_path}")
+                    mainIndex[file_id] = [str(datetime.now().timestamp()), file_path, 'video', video.filename]
+                    update_last_modified()
+                else:
+                    return jsonify({"success": False, "message": f"Invalid video file: {video.filename}"})
     
-    # Handle general file upload
+    # Handle general file upload - multiple files
     if 'file' in request.files:
-        file_id = generate_random_id()
-        file = request.files['file']
-        if file.filename != '':
-            file_extension = os.path.splitext(file.filename)[1]
-            file_path = os.path.join(dir_path, f"{file_id}{file_extension}")
-            file.save(file_path)
-            print(f"File saved to {file_path}")
-            mainIndex[file_id] = [str(datetime.now().timestamp()), file_path, 'file',file.filename]
-
-
-    update_last_modified()  # Update last modified time
+        files = request.files.getlist('file')
+        for file in files:
+            if file.filename != '':
+                file_id = generate_random_id()
+                file_extension = os.path.splitext(file.filename)[1]
+                file_path = os.path.join(dir_path, f"{file_id}{file_extension}")
+                file.save(file_path)
+                print(f"File saved to {file_path}")
+                mainIndex[file_id] = [str(datetime.now().timestamp()), file_path, 'file', file.filename]
+                update_last_modified()
+                
     return jsonify({"success": True, "message": "Message saved successfully."})
 
 @app.route('/last-update', methods=['GET'])
@@ -201,11 +223,9 @@ def get_file(message_id):
 
 @app.route('/delete_all', methods=['POST'])
 def delete_all_messages():
+    global mainIndex
     for id in mainIndex:
-        # rename all files as <orginal_name>.deleted
-        old_file_path = mainIndex[id][2]
-        new_file_path = f"{old_file_path}.deleted"
-        os.rename(old_file_path, new_file_path)
+        __delete_file(id)
     mainIndex.clear()
     update_last_modified()  # Update last modified time after deletion
     return jsonify({"success": True, "message": "All messages have been deleted."})
@@ -214,19 +234,8 @@ def delete_all_messages():
 @app.route('/delete/<message_id>', methods=['POST'])
 def delete_message(message_id):
     if message_id in mainIndex:
-        # rename file as <orginal_name>.deleted
-        old_file_path = mainIndex[message_id][2]
-        new_file_path = f"{old_file_path}.deleted"
-        if os.path.exists(old_file_path):
-            # check if it is being used currently
-            # if the file is bigger than retension size, delete it
-            if os.path.getsize(old_file_path) > RETENTION_SIZE:
-                os.remove(old_file_path)
-            else:
-                os.rename(old_file_path, new_file_path)
-        else:
-            print(f"File not found: {old_file_path}")
-        print(f"Message {mainIndex.pop(message_id)} deleted successfully.")
+        __delete_file(message_id)
+        del mainIndex[message_id]
         update_last_modified()  # Update last modified time after deletion
         return jsonify({"success": True, "message": f"Message {message_id} deleted successfully."})
     return jsonify({"success": False, "message": "Message not found."})
