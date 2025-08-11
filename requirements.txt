@@ -3,4 +3,3 @@ Flask
 datetime
 TSVZ
 gunicorn
-.venv
