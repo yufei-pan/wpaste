@@ -1,0 +1,15 @@
+{
+  "_comment": "Copy to wpaste.config.json (or ~/.wpaste.config.json, ~/.config/wpaste/wpaste.config.json, /etc/wpaste.config.json) and edit. Only the keys below are honored; unknown keys are ignored. Sizes accept bytes or strings like '16GB'/'100MB'; durations accept seconds or strings like '4h'/'30m'/'7d'.",
+
+  "BASE_DIR": "messages/",
+  "INDEX_FILE": "mainIndex.tsv",
+  "INDEX_REWRITE_INTERVAL": 72000,
+
+  "RETENTION_SIZE": "100MB",
+  "RETENTION_TIME": "4h",
+  "MAX_CONTENT_LENGTH": "16GB",
+
+  "HOST": "127.0.0.1",
+  "PORT": 5000,
+  "DEBUG": true
+}

@@ -1,220 +1,517 @@
-/* General reset */
+/* ===========================================================================
+   wpaste — a fast local clipboard. Quiet surfaces, one live accent, and a
+   monospace "data" treatment for metadata to match the tool's terminal world.
+   =========================================================================== */
+
+:root {
+    --bg: #eceef2;
+    --surface: #ffffff;
+    --surface-sunken: #f5f6f8;
+    --border: #e2e6ec;
+    --border-strong: #d3d9e2;
+
+    --ink: #1d232e;
+    --muted: #6b7585;
+
+    --accent: #3457d5;
+    --accent-ink: #2742a8;
+    --accent-tint: #e9edfb;
+
+    --danger: #d9484d;
+    --danger-ink: #b5383d;
+    --live: #25c065;
+
+    --radius: 10px;
+    --radius-sm: 7px;
+
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+
+    --shadow: 0 1px 2px rgba(20, 28, 45, 0.04), 0 4px 16px rgba(20, 28, 45, 0.06);
+}
+
+* { box-sizing: border-box; }
+
 html, body {
-    height: 100%;
     margin: 0;
     padding: 0;
-    overflow-x: hidden;
-    font-family: 'Arial', sans-serif; /* Clean, simple font */
-    background-color: #f9f9f9; /* Soft background color */
-    color: #333; /* Dark gray text for better readability */
+    min-height: 100%;
 }
 
-/* Basic layout */
 body {
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    align-items: stretch;
-    min-height: 100vh;
+    font-family: var(--sans);
+    color: var(--ink);
+    background: var(--bg);
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
 }
 
-/* Text elements */
-h2, h3, p {
-    color: #2c3e50; /* Slightly darker shade for headings */
-    padding: 0.5em 2em; /* Spacious padding for a clean look */
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
 }
 
-/* Form elements */
-textarea, input[type="file"] {
-    width: calc(100% - 4em); /* Full-width but allowing for padding */
-    margin: 1em 2em;
-    padding: 1em;
-    border: 1px solid #ccc;
-    border-radius: 0.25em;
-    box-sizing: border-box; /* Makes sure padding does not affect width */
+/* Narrow screens: everything stacks in one column (default). Wide screens get
+   a sticky compose/help sidebar with the messages filling the rest. */
+@media (min-width: 900px) {
+    .layout {
+        display: grid;
+        grid-template-columns: minmax(300px, 360px) 1fr;
+        gap: 2rem;
+        align-items: start;
+    }
+    .sidebar {
+        position: sticky;
+        top: 1.5rem;
+    }
+    .compose { margin-bottom: 0; }
+    .messages-heading { margin-top: 0.2rem; }
 }
 
-/* Buttons */
-button {
-    background-color: #3498db; /* Pleasant blue */
-    color: white;
-    border: none;
-    padding: 1em 1.5em;
-    margin: 1em 2em;
-    cursor: pointer;
-    border-radius: 0.5em;
-    transition: background-color 0.3s;
-}
-
-button:hover {
-    background-color: #2874a6; /* Darker blue on hover for feedback */
-}
-
-button:active {
-	background-color: #2980b9; /* Slightly darker blue on click for feedback */
-}
-
-.form-buttons {
-	display: flex;
-	justify-content: center;
-}
-
-
-.delete-button {
-    background-color: #e74c3c; /* Red color for delete actions */
-}
-
-.delete-all-button {
-    background-color: #555; /* Darker button for delete all */
-}
-
-/* Messages */
-.message {
-    margin-bottom: 1.5em;
-    background: white;
-    border: 1px solid #ddd;
-    border-radius: 0.5em;
-    box-shadow: 0 0.125em 0.25em rgba(0,0,0,0.1); /* Subtle shadow for depth */
-}
-
-.message pre {
-    background: #f0f0f0;
-    white-space: pre-wrap;
-    word-wrap: break-word;
-    margin: 1em 2em;
-    padding: 1em;
-    border: 1px solid #ddd;
-    border-radius: 0.5em;
-}
-
-/* Images within messages */
-.message img {
-    max-width: 100%; /* Ensure images are not wider than their container */
-    height: auto; /* Maintain aspect ratio */
-    display: block; /* Remove extra space below the image */
-    margin: 1em auto; /* Centering image and providing some margin */
-    border-radius: 0.25em; /* Slightly rounded corners for a softer look */
-    box-shadow: 0 0.125em 0.25em rgba(0,0,0,0.15); /* Adding a light shadow for depth */
-}
-
-
-.message video {
-	max-width: 100%; /* Ensure videos are not wider than their container */
-	height: auto; /* Maintain aspect ratio */
-	display: block; /* Remove extra space below the video */
-	margin: 1em auto; /* Centering video and providing some margin */
-	border-radius: 0.25em; /* Slightly rounded corners for a softer look */
-	box-shadow: 0 0.125em 0.25em rgba(0,0,0,0.15); /* Adding a light shadow for depth */
-}
-
-/* Links within messages */
-.message a {
-    margin: 1em 2em;
-    display: table;
-    padding: 1em 1em;
-    background-color: #007BFF;
-    color: white;
-    text-decoration: none;
-    border-radius: 1em;
-    font-weight: bold;
-}
-
-.message a:hover {
-    background-color: #0056b3;
-    cursor: pointer;
-}
-
-/* File upload styling */
-.file-upload {
+/* --- Header ---------------------------------------------------------------- */
+.topbar {
     display: flex;
     align-items: center;
-    width: calc(100% - 4em);
-    margin: 1em 2em;
-    padding: 1em;
-    border: 1px solid #ccc;
-    border-radius: 0.25em;
-    background-color: white;
-    box-sizing: border-box;
-    cursor: pointer;
-    position: relative;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1.25rem;
 }
 
-.file-upload input[type="file"] {
+.brand {
+    display: flex;
+    align-items: baseline;
+    gap: 0.75rem;
+}
+
+.brand h1 {
+    margin: 0;
+    font-size: 1.5rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--ink);
+}
+
+.live {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4em;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    user-select: none;
+}
+
+.live-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--live);
+}
+
+.live.pulse .live-dot {
+    animation: livepulse 0.9s ease-out;
+}
+
+@keyframes livepulse {
+    0%   { box-shadow: 0 0 0 0 rgba(37, 192, 101, 0.5); }
+    100% { box-shadow: 0 0 0 8px rgba(37, 192, 101, 0); }
+}
+
+/* --- Help disclosure ------------------------------------------------------- */
+.help {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0 1.1rem;
+    margin-bottom: 1.25rem;
+}
+
+.help summary {
+    cursor: pointer;
+    padding: 0.8rem 0;
+    font-weight: 600;
+    font-size: 0.92rem;
+    color: var(--ink);
+    list-style: none;
+}
+
+.help summary::-webkit-details-marker { display: none; }
+
+.help summary::before {
+    content: "›";
+    display: inline-block;
+    margin-right: 0.55em;
+    color: var(--muted);
+    transition: transform 0.15s ease;
+}
+
+.help[open] summary::before { transform: rotate(90deg); }
+
+.help ul {
+    margin: 0;
+    padding: 0 0 1rem 1.2rem;
+    color: var(--muted);
+    font-size: 0.9rem;
+}
+
+.help li { margin: 0.3em 0; }
+.help strong { color: var(--ink); }
+
+kbd {
+    font-family: var(--mono);
+    font-size: 0.78em;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border-strong);
+    border-bottom-width: 2px;
+    border-radius: 5px;
+    padding: 0.05em 0.4em;
+    color: var(--ink);
+}
+
+/* --- Compose form ---------------------------------------------------------- */
+.compose {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 1.1rem;
+    margin-bottom: 2.25rem;
+}
+
+textarea#message {
     width: 100%;
-    opacity: 0;
-    cursor: pointer;
-    height: 100%;
-    position: absolute;
-    top: 0;
-    left: 0;
+    resize: vertical;
+    min-height: 6.5em;
+    padding: 0.85em 1em;
+    font: inherit;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
 }
 
-.file-upload span {
-    flex: 1;
-    white-space: nowrap;
+textarea#message::placeholder { color: var(--muted); }
+
+.uploads {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.6rem;
+    margin-top: 0.85rem;
+}
+
+.file-upload {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding: 0.7em 0.9em;
+    background: var(--surface-sunken);
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius-sm);
+    cursor: pointer;
     overflow: hidden;
-    text-overflow: ellipsis;
-    padding: 0 1em;
+    transition: border-color 0.15s ease, background 0.15s ease;
 }
 
 .file-upload:hover {
-    background-color: #f0f0f0;
+    border-color: var(--accent);
+    background: var(--accent-tint);
 }
 
-/* Progress bar styling */
-.progress {
-    width: calc(100% - 4em);
-    margin: 1em 2em;
-    padding: 0.5em;
-    background-color: #f3f3f3;
-    border: 1px solid #ccc;
-    border-radius: 0.25em;
-    position: relative;
-    box-sizing: border-box;
+.file-upload-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--ink);
 }
+
+.file-upload input[type="file"] {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+}
+
+.file-name {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-height: 1em;
+}
+
+/* --- Buttons --------------------------------------------------------------- */
+.btn {
+    font: inherit;
+    font-weight: 600;
+    font-size: 0.9rem;
+    line-height: 1;
+    padding: 0.7em 1.2em;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--ink);
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.btn:hover { background: var(--surface-sunken); }
+
+.btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+.btn-primary:hover { background: var(--accent-ink); border-color: var(--accent-ink); }
+
+.btn-danger {
+    background: transparent;
+    border-color: var(--border-strong);
+    color: var(--danger);
+}
+.btn-danger:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+.form-buttons {
+    display: flex;
+    gap: 0.6rem;
+    margin-top: 0.9rem;
+}
+
+/* --- Progress -------------------------------------------------------------- */
+.progress {
+    margin-top: 0.9rem;
+    position: relative;
+    display: none;
+}
+.progress.active { display: block; }
+
 #progressContainer {
     width: 100%;
-    background-color: #e9e9e9;
-    border-radius: 0.25em;
+    height: 1.4em;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
     overflow: hidden;
-    position: relative;
 }
 #progressBar {
     width: 0%;
-    height: 2em;
-    /* Progress bar color, need to have sufficient contrast with background and upload text */
-    background-color: #b39ddb; /* Pastel purple */
-    border-radius: 0.25em;
-    transition: width 0.3s;
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.3s ease;
 }
 #uploadProgress {
     position: absolute;
-    top: 1em;
+    top: 0;
     left: 50%;
     transform: translateX(-50%);
-    font-weight: bold;
-    line-height: 1em;
+    line-height: 1.4em;
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    font-weight: 600;
+}
+.uploading      { color: var(--accent-ink); }
+.upload-complete { color: var(--live); }
+.upload-failed   { color: var(--danger); }
+
+/* --- Messages -------------------------------------------------------------- */
+.messages-heading {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--muted);
+    margin: 0 0 0.9rem;
 }
 
-/* Status text pastel colors */
-.uploading {
-    color: #ffb74d; /* Deeper pastel orange */
-}
-.upload-complete {
-    color: #80cbc4; /* Deeper pastel green */
-}
-.upload-failed {
-    color: #e57373; /* Deeper pastel red */
+/* Messages stay in a single column so each one is fully readable, not just a
+   preview tile. The compose sidebar fills the rest of a wide screen. */
+.message {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    margin-bottom: 1rem;
+    overflow: hidden;
 }
 
+.message-meta {
+    display: flex;
+    align-items: baseline;
+    gap: 0.7em;
+    padding: 0.65rem 1.1rem;
+    border-bottom: 1px solid var(--border);
+}
+.msg-type {
+    font-family: var(--mono);
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    color: var(--accent);
+    background: var(--accent-tint);
+    padding: 0.15em 0.55em;
+    border-radius: 5px;
+}
+.msg-time {
+    font-family: var(--mono);
+    font-size: 0.74rem;
+    color: var(--muted);
+}
+
+.content-container { padding: 1.1rem; }
+.content-container > p:first-child {
+    margin-top: 0;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--muted);
+    word-break: break-all;
+}
+
+.message pre {
+    background: var(--surface-sunken);
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    margin: 0;
+    padding: 0.9em 1em;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: var(--mono);
+    font-size: 0.85rem;
+}
+
+.message img,
+.message video {
+    max-width: 100%;
+    height: auto;
+    display: block;
+    margin: 0 auto;
+    border-radius: var(--radius-sm);
+}
+
+/* The file-download link is appended directly to the content container;
+   Markdown links live inside .markdown-body and are styled separately. */
+.content-container > a {
+    display: inline-block;
+    padding: 0.6em 1.1em;
+    background: var(--accent);
+    color: #fff;
+    text-decoration: none;
+    border-radius: var(--radius-sm);
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+.content-container > a:hover { background: var(--accent-ink); }
+
+.buttons-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0 1.1rem 1.1rem;
+}
+.buttons-container button {
+    font: inherit;
+    font-weight: 600;
+    font-size: 0.82rem;
+    padding: 0.5em 0.9em;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--ink);
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.buttons-container button:hover { background: var(--surface-sunken); }
+.buttons-container .copy-button {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+.buttons-container .copy-button:hover { background: var(--accent-tint); }
+.buttons-container .delete-button { color: var(--danger); }
+.buttons-container .delete-button:hover { background: var(--danger); border-color: var(--danger); color: #fff; }
+
+/* --- Rendered Markdown ----------------------------------------------------- */
+.markdown-body { overflow-wrap: break-word; }
+.markdown-body > :first-child { margin-top: 0; }
+.markdown-body > :last-child { margin-bottom: 0; }
+
+.markdown-body h1, .markdown-body h2, .markdown-body h3,
+.markdown-body h4, .markdown-body h5, .markdown-body h6 {
+    margin: 0.8em 0 0.35em;
+    color: var(--ink);
+    line-height: 1.25;
+}
+.markdown-body h1 { font-size: 1.45rem; }
+.markdown-body h2 { font-size: 1.2rem; }
+.markdown-body h3 { font-size: 1.05rem; }
+.markdown-body h4, .markdown-body h5, .markdown-body h6 { font-size: 0.95rem; }
+.markdown-body h1, .markdown-body h2 {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.2em;
+}
+.markdown-body p { margin: 0.5em 0; }
+.markdown-body ul, .markdown-body ol { margin: 0.5em 0; padding-left: 1.5em; }
+.markdown-body blockquote {
+    margin: 0.5em 0;
+    padding: 0 1em;
+    color: var(--muted);
+    border-left: 3px solid var(--border-strong);
+}
+.markdown-body code {
+    background: var(--surface-sunken);
+    padding: 0.15em 0.35em;
+    border-radius: 5px;
+    font-family: var(--mono);
+    font-size: 0.88em;
+}
+.markdown-body pre { margin: 0.6em 0; }
+.markdown-body pre code {
+    display: block;
+    padding: 1em;
+    overflow-x: auto;
+}
+.markdown-body table { border-collapse: collapse; margin: 0.6em 0; }
+.markdown-body th, .markdown-body td {
+    border: 1px solid var(--border);
+    padding: 0.4em 0.8em;
+}
+.markdown-body a { color: var(--accent); text-decoration: underline; }
+.markdown-body img { margin: 0.5em 0; border-radius: var(--radius-sm); }
+
+/* --- Toast ----------------------------------------------------------------- */
 .toast {
     position: fixed;
-    bottom: 20px;
+    bottom: 24px;
     left: 50%;
     transform: translateX(-50%);
-    background-color: rgba(0,0,0,0.7);
-    color: white;
-    padding: 10px 20px;
-    border-radius: 5px;
+    background: var(--ink);
+    color: #fff;
+    padding: 0.7em 1.2em;
+    border-radius: var(--radius-sm);
+    font-size: 0.88rem;
+    box-shadow: var(--shadow);
     z-index: 1000;
+}
+
+/* --- Focus & motion -------------------------------------------------------- */
+:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
+}
+
+/* --- Mobile ---------------------------------------------------------------- */
+@media (max-width: 600px) {
+    .container { padding: 1.25rem 0.9rem 3rem; }
+    .uploads { grid-template-columns: 1fr; }
+    .topbar { flex-wrap: wrap; }
 }

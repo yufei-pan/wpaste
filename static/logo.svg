@@ -1,0 +1,31 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="wpaste logo">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#4762e6"/>
+      <stop offset="1" stop-color="#2c44b0"/>
+    </linearGradient>
+    <linearGradient id="board" x1="256" y1="120" x2="256" y2="412" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#eef1f7"/>
+    </linearGradient>
+  </defs>
+
+  <!-- app-icon rounded square -->
+  <rect x="0" y="0" width="512" height="512" rx="116" fill="url(#bg)"/>
+
+  <!-- clipboard board -->
+  <rect x="138" y="132" width="236" height="284" rx="30" fill="url(#board)"/>
+
+  <!-- clip -->
+  <rect x="206" y="104" width="100" height="58" rx="22" fill="#22305f"/>
+  <rect x="236" y="118" width="40" height="20" rx="10" fill="#ffffff" opacity="0.85"/>
+
+  <!-- content lines -->
+  <rect x="176" y="206" width="160" height="22" rx="11" fill="#3457d5"/>
+  <rect x="176" y="252" width="160" height="20" rx="10" fill="#ccd5e8"/>
+  <rect x="176" y="296" width="104" height="20" rx="10" fill="#ccd5e8"/>
+
+  <!-- live status badge (echoes the UI's "live" dot) -->
+  <circle cx="344" cy="392" r="42" fill="url(#board)"/>
+  <circle cx="344" cy="392" r="26" fill="#25c065"/>
+</svg>

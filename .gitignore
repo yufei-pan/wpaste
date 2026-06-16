@@ -9,4 +9,7 @@ TSVZ.py
 test.tsv
 mainIndex.tsv
 
+# Local runtime config (keep wpaste.config.example.json tracked)
+wpaste.config.json
+
 venv

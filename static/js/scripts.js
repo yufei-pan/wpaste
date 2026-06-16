@@ -6,7 +6,17 @@ async function checkForUpdates() {
 	if (data.last_update > lastKnownUpdate) {
 		lastKnownUpdate = data.last_update;
 		fetchMessages(); // Fetch messages only if there's an update
+		pulseLive();    // Flash the "live" dot when the board actually changes
 	}
+}
+
+// Briefly animate the header's live dot to signal a real refresh.
+function pulseLive() {
+	const el = document.getElementById('liveDot');
+	if (!el) return;
+	el.classList.remove('pulse');
+	void el.offsetWidth; // force reflow so the animation restarts
+	el.classList.add('pulse');
 }
 
 setInterval(checkForUpdates, 5000); // Check every 5 seconds
@@ -20,11 +30,14 @@ document.getElementById('messageForm').addEventListener('submit', async function
 	const xhr = new XMLHttpRequest();
 	xhr.open('POST', '/message', true);
 
+	const progress = document.getElementById('progress');
+	progress.classList.add('active'); // reveal the (otherwise hidden) progress bar
+
 	xhr.upload.addEventListener('progress', function(e) {
 		if (e.lengthComputable) {
 			const percentComplete = (e.loaded / e.total) * 100;
 			const uploadProgress = document.getElementById('uploadProgress');
-			uploadProgress.textContent = `Upload progress: ${percentComplete.toFixed(2)}%`;
+			uploadProgress.textContent = `${percentComplete.toFixed(0)}%`;
 			uploadProgress.className = 'uploading';
 			document.getElementById('progressBar').style.width = `${percentComplete}%`;
 		}
@@ -39,15 +52,21 @@ document.getElementById('messageForm').addEventListener('submit', async function
 			document.getElementById('image-name').textContent = '';
 			document.getElementById('video-name').textContent = '';
 			document.getElementById('file-name').textContent = '';
-			uploadProgress.textContent = 'Upload complete';
+			uploadProgress.textContent = 'Sent';
 			uploadProgress.className = 'upload-complete';
-			document.getElementById('progressBar').style.width = '0%';
+			document.getElementById('progressBar').style.width = '100%';
 			checkForUpdates();
 		} else {
 			uploadProgress.textContent = 'Upload failed';
 			uploadProgress.className = 'upload-failed';
 			document.getElementById('progressBar').style.width = '0%';
 		}
+		// Let the final status read for a moment, then tuck the bar away.
+		setTimeout(function() {
+			progress.classList.remove('active');
+			document.getElementById('progressBar').style.width = '0%';
+			uploadProgress.textContent = '';
+		}, 1500);
 	};
 
 	xhr.send(formData);
@@ -78,6 +97,58 @@ function isHTML(str) {
 	return bodyHasNodes || headHasNodes;
 }
 
+function looksLikeMarkdown(str) {
+	if (!str || !str.trim()) {
+		return false;
+	}
+	// Heuristics: only treat text as Markdown when it contains recognizable
+	// block/inline syntax, to avoid mangling ordinary plain text.
+	const patterns = [
+		/^#{1,6}\s+\S/m,                  // ATX headers (# Heading)
+		/^\s*[-*+]\s+\S/m,                // unordered lists
+		/^\s*\d+\.\s+\S/m,                // ordered lists
+		/^\s*>\s+\S/m,                    // blockquotes
+		/```[\s\S]*?```/,                 // fenced code blocks
+		/`[^`\n]+`/,                      // inline code
+		/\*\*[^*\n]+\*\*/,                // bold (**text**)
+		/__[^_\n]+__/,                    // bold (__text__)
+		/\[[^\]]+\]\([^)\s]+\)/,          // links / images
+		/^\s*\|.+\|\s*$/m,                // tables
+		/^(\s*)(-{3,}|\*{3,}|_{3,})\s*$/m,// horizontal rules
+		/^\S.*\n(={3,}|-{3,})\s*$/m,      // setext headers
+	];
+	return patterns.some((re) => re.test(str));
+}
+
+// Build the element used to display a text message in a given mode:
+// 'html' (sanitized HTML), 'markdown' (rendered + sanitized), or 'plain' (<pre>).
+function buildTextElement(content, mode) {
+	if (mode === 'html') {
+		const div = document.createElement('div');
+		div.innerHTML = DOMPurify.sanitize(content);
+		return div;
+	}
+	if (mode === 'markdown') {
+		const div = document.createElement('div');
+		div.classList.add('markdown-body');
+		div.innerHTML = DOMPurify.sanitize(marked.parse(content));
+		return div;
+	}
+	const pre = document.createElement('pre');
+	pre.textContent = content;
+	return pre;
+}
+
+function detectTextMode(content) {
+	if (isHTML(content)) {
+		return 'html';
+	}
+	if (looksLikeMarkdown(content)) {
+		return 'markdown';
+	}
+	return 'plain';
+}
+
 async function fetchMessages() {
     const response = await fetch('/messages');
     const result = await response.json();
@@ -96,25 +167,14 @@ async function fetchMessages() {
         const contentContainer = document.createElement('div');
         contentContainer.classList.add('content-container');
 
+        // Detect the render mode once; reused by the renderer and the toggle below.
+        const textMode = message.type === 'text' ? detectTextMode(message.content) : 'plain';
+
         if (message.type === 'text') {
-            const isMessageHTML = isHTML(message.content);
+            // Auto-detect and render HTML or Markdown; otherwise show raw text.
+            contentElementRef = buildTextElement(message.content, textMode);
+            contentContainer.appendChild(contentElementRef);
 
-            const rawPre = document.createElement('pre');
-            rawPre.textContent = message.content; // The raw content
-
-            if (isMessageHTML) {
-                // If HTML, create a sanitized container
-                const sanitizedDiv = document.createElement('div');
-                const sanitizedHTML = DOMPurify.sanitize(message.content);
-                sanitizedDiv.innerHTML = sanitizedHTML;
-                contentElementRef = sanitizedDiv;  // We'll show the sanitized version by default
-                contentContainer.appendChild(sanitizedDiv);
-            } else {
-                // If it's not HTML, just show it in a <pre>
-                contentElementRef = rawPre;
-                contentContainer.appendChild(rawPre);
-            }
-            
             // For the copyToClipboard function, we'll use whichever element is currently displayed
             contentToCopy = contentElementRef;
 
@@ -165,11 +225,19 @@ async function fetchMessages() {
 
         messageElement.appendChild(contentContainer);
 
-        // Show time info
-        const dateTime = document.createElement('p');
+        // Meta row (type + time) pinned to the top of the card.
+        const meta = document.createElement('div');
+        meta.classList.add('message-meta');
+        const typeTag = document.createElement('span');
+        typeTag.classList.add('msg-type');
+        typeTag.textContent = message.type;
+        const timeTag = document.createElement('span');
+        timeTag.classList.add('msg-time');
         const date = new Date(message.timestamp * 1000);
-        dateTime.textContent = `Time: ${date.toDateString()} ${date.toTimeString()}`;
-        messageElement.appendChild(dateTime);
+        timeTag.textContent = date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+        meta.appendChild(typeTag);
+        meta.appendChild(timeTag);
+        messageElement.insertBefore(meta, messageElement.firstChild);
 
         // ---- CREATE A BUTTONS CONTAINER SO WE CAN LINE THEM UP ----
         const buttonsContainer = document.createElement('div');
@@ -178,7 +246,7 @@ async function fetchMessages() {
 
         // Copy button
         const copyButton = document.createElement('button');
-        copyButton.textContent = 'Copy to Clipboard';
+        copyButton.textContent = 'Copy';
         copyButton.classList.add('copy-button');
         copyButton.onclick = function() { copyToClipboard(contentToCopy); };
         buttonsContainer.appendChild(copyButton);
@@ -190,36 +258,24 @@ async function fetchMessages() {
         deleteButton.onclick = function() { deleteMessage(message.id); };
         buttonsContainer.appendChild(deleteButton);
 
-        // (Optional) If it's text AND recognized as HTML, add a "Show Raw" button
-        if (message.type === 'text' && isHTML(message.content)) {
-            // Create the "Show Raw" button
+        // (Optional) If it's text AND rendered (HTML or Markdown), add a "Show Raw" toggle
+        if (textMode !== 'plain') {
             const showRawButton = document.createElement('button');
             showRawButton.textContent = 'Show Raw';
             showRawButton.classList.add('show-raw-button');
-            messageElement.setAttribute('data-show-raw', 'false'); 
-            // false => currently showing sanitized HTML
+            messageElement.setAttribute('data-show-raw', 'false');
+            // false => currently showing rendered content
 
             showRawButton.onclick = function() {
                 const isCurrentlyRaw = (messageElement.getAttribute('data-show-raw') === 'true');
-                
-                if (isCurrentlyRaw) {
-                    // Switch to sanitized HTML
-                    const sanitizedDiv = document.createElement('div');
-                    const sanitizedHTML = DOMPurify.sanitize(message.content);
-                    sanitizedDiv.innerHTML = sanitizedHTML;
-                    contentContainer.replaceChild(sanitizedDiv, contentElementRef);
-                    contentElementRef = sanitizedDiv;
-                    messageElement.setAttribute('data-show-raw', 'false');
-                    showRawButton.textContent = 'Show Raw';
-                } else {
-                    // Switch to raw <pre>
-                    const preElement = document.createElement('pre');
-                    preElement.textContent = message.content;
-                    contentContainer.replaceChild(preElement, contentElementRef);
-                    contentElementRef = preElement;
-                    messageElement.setAttribute('data-show-raw', 'true');
-                    showRawButton.textContent = 'Show Rendered';
-                }
+                // When raw, switch back to the detected render mode; otherwise show plain text.
+                const newMode = isCurrentlyRaw ? textMode : 'plain';
+                const newElement = buildTextElement(message.content, newMode);
+                contentContainer.replaceChild(newElement, contentElementRef);
+                contentElementRef = newElement;
+                contentToCopy = newElement;
+                messageElement.setAttribute('data-show-raw', isCurrentlyRaw ? 'false' : 'true');
+                showRawButton.textContent = isCurrentlyRaw ? 'Show Raw' : 'Show Rendered';
             };
 
             // Add the showRawButton to the same container

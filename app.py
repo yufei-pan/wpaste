@@ -9,15 +9,93 @@ import TSVZ
 #import imghdr
 import filetype
 
-app = Flask(__name__)
-BASE_DIR = 'messages/'
-RETENTION_SIZE = 1024 * 1024 * 100 # 100MB, delete files bigger than this size when deleting
-RETENTION_TIME = 4 * 3600 # 4 hours, delete files older than this time when deleting
-
-version = '1.3.9'
+version = '1.5.0'
 
 #TODO: add feature: copy from the webpage should be easier : ctrl c copy the last message , add a copy to clipboard button to messages
 #TODO: add periodic update / event based update to the webpage
+
+# print with flush on
+from functools import partial
+print = partial(print, flush=True)
+
+# ---------------------------------------------------------------------------
+# Configuration
+#
+# Defaults below can be overridden by a JSON config file. The first file found
+# in CONFIG_SEARCH_PATHS wins. Sizes accept plain bytes or human-readable
+# strings like "16GB"/"100MB"; durations accept seconds or strings like
+# "4h"/"30m". Only keys present in DEFAULT_CONFIG are honored.
+# ---------------------------------------------------------------------------
+DEFAULT_CONFIG = {
+    'BASE_DIR': 'messages/',                        # where uploaded files live
+    'INDEX_FILE': 'mainIndex.tsv',                  # TSVZ-backed message index
+    'INDEX_REWRITE_INTERVAL': 3600 * 20,            # TSVZ compaction interval (s)
+    'RETENTION_SIZE': '100MB',                       # hard-delete files larger than this
+    'RETENTION_TIME': '4h',                          # purge entries older than this
+    'MAX_CONTENT_LENGTH': '16GB',                    # max accepted upload size
+    'HOST': '127.0.0.1',                             # dev server bind host
+    'PORT': 5000,                                    # dev server bind port
+    'DEBUG': True,                                    # dev server debug mode
+}
+
+CONFIG_SEARCH_PATHS = [
+    'wpaste.config.json',
+    os.path.expanduser('~/.wpaste.config.json'),
+    os.path.expanduser('~/.config/wpaste/wpaste.config.json'),
+    '/etc/wpaste.config.json',
+]
+
+_SIZE_UNITS = {'B': 1, 'K': 1024, 'KB': 1024, 'M': 1024**2, 'MB': 1024**2,
+               'G': 1024**3, 'GB': 1024**3, 'T': 1024**4, 'TB': 1024**4}
+_TIME_UNITS = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}
+
+def parse_size(value):
+    '''Accept an int/float of bytes or a string like "16GB"/"100MB"/"512K".'''
+    if isinstance(value, (int, float)):
+        return int(value)
+    s = str(value).strip().upper()
+    for unit in sorted(_SIZE_UNITS, key=len, reverse=True):
+        if s.endswith(unit):
+            return int(float(s[:-len(unit)].strip()) * _SIZE_UNITS[unit])
+    return int(float(s))
+
+def parse_duration(value):
+    '''Accept an int/float of seconds or a string like "4h"/"30m"/"7d".'''
+    if isinstance(value, (int, float)):
+        return int(value)
+    s = str(value).strip().lower()
+    for unit, mult in _TIME_UNITS.items():
+        if s.endswith(unit):
+            return int(float(s[:-1].strip()) * mult)
+    return int(float(s))
+
+def load_config():
+    config = dict(DEFAULT_CONFIG)
+    for path in CONFIG_SEARCH_PATHS:
+        if os.path.isfile(path):
+            try:
+                with open(path) as f:
+                    user_config = json.load(f)
+                unknown = set(user_config) - set(DEFAULT_CONFIG)
+                if unknown:
+                    print(f"Ignoring unknown config keys in {path}: {sorted(unknown)}")
+                config.update({k: v for k, v in user_config.items() if k in DEFAULT_CONFIG})
+                print(f"Loaded config from {path}")
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"Failed to load config from {path}: {e}")
+            break
+    return config
+
+_config = load_config()
+BASE_DIR = _config['BASE_DIR']
+INDEX_FILE = _config['INDEX_FILE']
+INDEX_REWRITE_INTERVAL = int(_config['INDEX_REWRITE_INTERVAL'])
+RETENTION_SIZE = parse_size(_config['RETENTION_SIZE'])  # hard-delete files bigger than this
+RETENTION_TIME = parse_duration(_config['RETENTION_TIME'])  # purge entries older than this
+MAX_CONTENT_LENGTH = parse_size(_config['MAX_CONTENT_LENGTH'])
+
+app = Flask(__name__)
+app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 
 if not os.path.exists(BASE_DIR):
     os.makedirs(BASE_DIR)
@@ -30,15 +108,6 @@ last_update_time = time.time_ns()
 def update_last_modified():
     global last_update_time
     last_update_time = time.time_ns()
-
-# print with flush on
-from functools import partial
-print = partial(print, flush=True)
-# def print(*args, **kwargs):
-# 	'''Print with flush=True by default.'''
-# 	kwargs.setdefault('flush', True)
-# 	__builtins__.print(*args, **kwargs)
-
 
 def generate_random_id(length=8):
     letters = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz123456789'
@@ -63,14 +132,6 @@ def validate_image(stream):
         return kind.extension
     return None
 
-def validate_video(stream):
-    kind = filetype.guess(stream)
-    if kind is None:
-        return None
-    if kind.mime.startswith('video/'):
-        return kind.extension
-    return None
-
 def __delete_file(message_id):
     global mainIndex
     global RETENTION_SIZE
@@ -91,11 +152,15 @@ def __delete_file(message_id):
         print(f"File not found: {old_file_path}")
     print(f"Message {message_id} deleted successfully.")
 
-mainIndex = TSVZ.TSVZed('mainIndex.tsv',header = ['id','unix_time','path','type','filename'],rewrite_interval=3600 * 20,verbose=False)
+mainIndex = TSVZ.TSVZed(INDEX_FILE,header = ['id','unix_time','path','type','filename'],rewrite_interval=INDEX_REWRITE_INTERVAL,verbose=False)
 
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/favicon.ico')
+def favicon():
+    return app.send_static_file('favicon.ico')
 
 @app.route('/message', methods=['POST'])
 def post_message():
@@ -171,26 +236,35 @@ def get_last_update():
 def get_messages():
     messages = []
     message_to_delete = []
-    for id in mainIndex:
-        # if message is older than 2 hours, mark it for deletion
-        if datetime.now().timestamp() - float(mainIndex[id][1]) > RETENTION_TIME:
+    now = datetime.now().timestamp()
+    # Iterate over a snapshot of the keys so a concurrent POST/delete cannot
+    # mutate the index mid-iteration; re-check membership before each access.
+    for id in list(mainIndex):
+        row = mainIndex[id] if id in mainIndex else None
+        if row is None:
+            continue
+        unix_time, file_path, msg_type = float(row[1]), row[2], row[3]
+        # Purge entries past their retention window.
+        if now - unix_time > RETENTION_TIME:
             message_to_delete.append(id)
+            continue
+        # Reap orphaned entries whose backing file is gone instead of
+        # surfacing them as permanent "Message not found." rows.
+        if not os.path.exists(file_path):
+            message_to_delete.append(id)
+            continue
+        if msg_type == 'image':
+            content = f'/image/{id}'
+        elif msg_type == 'text':
+            with open(file_path, 'r') as file:
+                content = file.read()
+        elif msg_type == 'video':
+            content = f'/video/{id}'
+        elif msg_type == 'file':
+            content = f'/file/{id}'
         else:
-            if os.path.exists(mainIndex[id][2]):
-                if mainIndex[id][3] == 'image':
-                    content = f'/image/{id}'
-                elif mainIndex[id][3] == 'text':
-                    with open(mainIndex[id][2], 'r') as file:
-                        content = file.read()
-                elif mainIndex[id][3] == 'video':
-                    content = f'/video/{id}'
-                elif mainIndex[id][3] == 'file':
-                    content = f'/file/{id}'
-                else:
-                    content = "Content type not supported."
-            else:
-                content = "Message not found."
-            messages.append({"id": id, "content": content, "timestamp": int(float(mainIndex[id][1])), "type": mainIndex[id][3], "filename": mainIndex[id][4]})
+            content = "Content type not supported."
+        messages.append({"id": id, "content": content, "timestamp": int(unix_time), "type": msg_type, "filename": row[4]})
     messages.reverse()
     for id in message_to_delete:
         delete_message(id)
@@ -224,7 +298,7 @@ def get_file(message_id):
 @app.route('/delete_all', methods=['POST'])
 def delete_all_messages():
     global mainIndex
-    for id in mainIndex:
+    for id in list(mainIndex):
         __delete_file(id)
     mainIndex.clear()
     update_last_modified()  # Update last modified time after deletion
@@ -241,4 +315,4 @@ def delete_message(message_id):
     return jsonify({"success": False, "message": "Message not found."})
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host=_config['HOST'], port=int(_config['PORT']), debug=bool(_config['DEBUG']))

@@ -4,61 +4,85 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Copy Paste Board</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">
+    <link rel="icon" type="image/x-icon" href="{{ url_for('static', filename='favicon.ico') }}">
+    <link rel="apple-touch-icon" href="{{ url_for('static', filename='logo.png') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
-    <h2>Copy Paste Board</h2>
-    <button type="button" onclick="deleteAllMessages()" class="delete-all-button">Delete All Messages</button>
-    <p>
-        You can:<br/>
-        - Paste text or images here directly.<br/>
-        - Drag and drop images here.<br/>
-        - Type a message in the text area below and click "Send Message".<br/>
-        - Select an image file and click "Send Message".<br/>
-        - Copy a message by clicking the "Copy to Clipboard" button.<br/>
-        - Delete a message by clicking the "Delete" button.<br/>
-        - Delete all messages by clicking the "Delete All Messages" button.<br/>
-        - Copy the latest message by pressing #Copy Combination Key#.<br/>
-        - Messages are automatically updated every 5 seconds.
+  <div class="container">
+    <header class="topbar">
+      <div class="brand">
+        <h1>Copy Paste Board</h1>
+        <span class="live" id="liveDot" title="The board refreshes itself every 5 seconds">
+          <span class="live-dot"></span>live
+        </span>
+      </div>
+      <button type="button" onclick="deleteAllMessages()" class="btn btn-danger">Delete all</button>
+    </header>
 
-    </p>
-<form id="messageForm" enctype="multipart/form-data">
-    <textarea id="message" name="message" placeholder="Type your message here..." rows="4" cols="50"></textarea>
-    <br>
-    <div class="file-upload">
-        <label for="image">Images</label>
-        <input type="file" id="image" name="image" accept="image/*" multiple>
-        <span id="image-name"></span>
-    </div>
-    <div class="file-upload">
-        <label for="video">Videos</label>
-        <input type="file" id="video" name="video" accept="video/*" multiple>
-        <span id="video-name"></span>
-    </div>
-    <div class="file-upload">
-        <label for="file">Other Files</label>
-        <input type="file" id="file" name="file" accept="*/*" multiple>
-        <span id="file-name"></span>
-    </div>
-    <br>
-    <div id="progress" class="progress">
+    <div class="layout">
+    <aside class="sidebar">
+    <details class="help">
+      <summary>How to use</summary>
+      <ul>
+        <li>Paste (<kbd>⌘/Ctrl</kbd>+<kbd>V</kbd>) or drag &amp; drop files anywhere on the page — or type below and Send.</li>
+        <li>Text renders <strong>Markdown</strong> and <strong>HTML</strong> automatically; hit <em>Show Raw</em> on a message to see the source.</li>
+        <li>Each message has its own <em>Copy</em> and <em>Delete</em>. Press <kbd>⌘/Ctrl</kbd>+<kbd>C</kbd> with nothing selected to copy the latest one.</li>
+        <li>Images, videos, and any other files are supported, several at once.</li>
+      </ul>
+    </details>
+
+    <form id="messageForm" class="compose" enctype="multipart/form-data">
+      <textarea id="message" name="message" placeholder="Type or paste a message…  Markdown and HTML render automatically." rows="4"></textarea>
+
+      <div class="uploads">
+        <label class="file-upload" for="image">
+          <span class="file-upload-label">Images</span>
+          <input type="file" id="image" name="image" accept="image/*" multiple>
+          <span class="file-name" id="image-name"></span>
+        </label>
+        <label class="file-upload" for="video">
+          <span class="file-upload-label">Videos</span>
+          <input type="file" id="video" name="video" accept="video/*" multiple>
+          <span class="file-name" id="video-name"></span>
+        </label>
+        <label class="file-upload" for="file">
+          <span class="file-upload-label">Others</span>
+          <input type="file" id="file" name="file" accept="*/*" multiple>
+          <span class="file-name" id="file-name"></span>
+        </label>
+      </div>
+
+      <div id="progress" class="progress">
         <div id="progressContainer">
-            <div id="progressBar"></div>
+          <div id="progressBar"></div>
         </div>
         <div id="uploadProgress"></div>
-    </div>
-    <div class="form-buttons">
-        <button type="submit">Send Message</button>
-        <button type="button" id="clearButton">Clear</button>
-    </div>
-</form>
-    
+      </div>
 
-    <h3>Messages</h3>
-    <div id="messages"></div>
-    <script src="
-    https://cdn.jsdelivr.net/npm/dompurify@3.1.0/dist/purify.min.js
-    "></script>
+      <div class="form-buttons">
+        <button type="submit" class="btn btn-primary">Send message</button>
+        <button type="button" id="clearButton" class="btn">Clear</button>
+      </div>
+    </form>
+    </aside>
+
+    <main class="main">
+      <h2 class="messages-heading">Messages</h2>
+      <div id="messages"></div>
+    </main>
+    </div>
+  </div>
+    <!-- Load external libs from CDN, falling back to locally vendored copies if the CDN is unreachable. -->
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.0/dist/purify.min.js"></script>
+    <script>
+        window.DOMPurify || document.write('<script src="{{ url_for('static', filename='js/vendor/purify.min.js') }}"><\/script>');
+    </script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+    <script>
+        window.marked || document.write('<script src="{{ url_for('static', filename='js/vendor/marked.min.js') }}"><\/script>');
+    </script>
     <script src="{{ url_for('static', filename='js/scripts.js') }}"></script>
 </body>
 </html>
