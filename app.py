@@ -212,10 +212,12 @@ def validate_image(stream):
     stream.seek(0)  # Reset stream pointer
     # imghdr had been deprecated, use filetype instead
     kind = filetype.guess(header)
-    if kind is None:
-        return None
-    if kind.mime.startswith('image/'):
+    if kind is not None and kind.mime.startswith('image/'):
         return kind.extension
+    # filetype (1.2.0) doesn't recognize JPEG XL; sniff its two signatures:
+    # naked codestream (FF 0A) and the ISOBMFF container box ('JXL ').
+    if header[:2] == b'\xff\x0a' or header[:12] == b'\x00\x00\x00\x0cJXL \x0d\x0a\x87\x0a':
+        return 'jxl'
     return None
 
 def delete_file_on_disk(index, message_id):
@@ -388,10 +390,13 @@ def render_plaintext(slug):
         r = state.index[mid] if mid in state.index else None
         if r is None:
             continue
-        unix_time = float(r[1])
+        try:                              # skip blank/partial (tombstone) rows
+            unix_time = float(r[1])
+        except (ValueError, TypeError, IndexError):
+            continue
         if retention and now - unix_time > retention:
             continue
-        if not os.path.exists(r[2]):
+        if not r[2] or not os.path.exists(r[2]):
             continue
         rows.append((unix_time, mid, r[2], r[3], r[4]))
     rows.sort(reverse=True)
@@ -519,7 +524,16 @@ def get_messages(slug):
         row = index[id] if id in index else None
         if row is None:
             continue
-        unix_time, file_path, msg_type = float(row[1]), row[2], row[3]
+        # A deleted entry can resurrect as a blank/partial row after a TSVZ
+        # reload (its tombstone reloads with empty fields). Treat any row whose
+        # timestamp won't parse as a stale entry to reap, rather than letting
+        # float('') take down the whole listing with a 500.
+        try:
+            unix_time = float(row[1])
+        except (ValueError, TypeError, IndexError):
+            message_to_delete.append(id)
+            continue
+        file_path, msg_type = row[2], row[3]
         if retention and now - unix_time > retention:
             message_to_delete.append(id)
             continue

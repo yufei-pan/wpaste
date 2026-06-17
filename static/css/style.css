@@ -678,11 +678,13 @@ textarea#message::placeholder { color: var(--muted); }
 }
 .code-form {
     display: flex;
+    flex-wrap: wrap;          /* button drops below instead of overflowing on narrow cards */
     gap: 0.5rem;
     margin-top: 0.8rem;
 }
 .code-form input {
-    flex: 1;
+    flex: 1 1 8rem;
+    min-width: 0;             /* allow the input to shrink so the button is never clipped */
     font: inherit;
     letter-spacing: 0.25em;
     padding: 0.6em 0.8em;
@@ -691,6 +693,7 @@ textarea#message::placeholder { color: var(--muted); }
     background: var(--surface);
     color: var(--ink);
 }
+.code-form .btn { white-space: nowrap; }
 .modal-err { color: var(--danger-ink); font-size: 0.85rem; min-height: 1.2em; margin-top: 0.5rem; }
 
 /* Settings modal */

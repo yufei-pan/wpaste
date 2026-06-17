@@ -429,8 +429,15 @@ function copyToClipboard(element) {
 	}
 }
 
+// True when focus is in any editable field (the compose box, the board name
+// box, a TOTP/code input, etc.) — those should keep native copy/paste.
+function inEditableField() {
+	const ae = document.activeElement;
+	return !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable);
+}
+
 document.addEventListener('copy', function(e) {
-	if (document.activeElement.id === 'message') {
+	if (inEditableField()) {
 		return;
 	}
 	const selection = window.getSelection();
@@ -475,8 +482,8 @@ function postFormData(formData) {
 }
 
 document.body.addEventListener('paste', async function(e) {
-	if (document.activeElement.id === 'message') {
-		return;
+	if (inEditableField()) {
+		return;   // let the focused field (compose, board name, TOTP code…) paste normally
 	}
 	if (!canPost()) return;
 	e.preventDefault();
