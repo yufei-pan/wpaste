@@ -11,5 +11,20 @@
 
   "HOST": "127.0.0.1",
   "PORT": 5000,
-  "DEBUG": true
+  "DEBUG": true,
+
+  "_comment_boards": "Private boards. BOARDS_DIR/REGISTRY_FILE hold per-board data. SECRET_KEY signs session cookies (blank = auto-generated to .wpaste_secret). MAX_SESSIONS is how many logged-in cookies stay valid per board (oldest evicted on a new login). RETENTION_TIME of 0 disables auto-delete; each board may override it from its Settings. Set PREFER_SECURE_COOKIES true when served over HTTPS.",
+  "BOARDS_DIR": "boards/",
+  "REGISTRY_FILE": "boards.nsv",
+  "SECRET_KEY": "",
+  "MAX_SESSIONS": 7,
+  "PREFER_SECURE_COOKIES": false,
+
+  "_comment_security": "TOTP brute-force throttle: TOTP_MAX_FAILURES is the per-IP ceiling, TOTP_BOARD_MAX_FAILURES the per-board (all IPs) ceiling within TOTP_LOCKOUT_TIME — the latter stops IP/header rotation. TRUSTED_PROXY_HOPS is the number of reverse proxies in front of wpaste (0 = none): set it to the real count so per-IP limits see the true client. If you run behind a proxy and leave it 0, every client looks like the proxy and shares one rate-limit bucket.",
+  "TOTP_MAX_FAILURES": 5,
+  "TOTP_BOARD_MAX_FAILURES": 20,
+  "TOTP_LOCKOUT_TIME": "5m",
+  "ACCESS_RATE_LIMIT": 30,
+  "ACCESS_RATE_WINDOW": "1m",
+  "TRUSTED_PROXY_HOPS": 0
 }

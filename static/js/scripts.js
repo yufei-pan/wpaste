@@ -1,26 +1,82 @@
+// ===========================================================================
+// Board context. The page is served for either the default/public board
+// (data-board="") or a named board (data-board="<slug>"). Every API call is
+// scoped through api() so the same code drives both.
+// ===========================================================================
+const BOARD = (document.body.dataset.board || '').trim();
+let BOARD_PERM = BOARD ? 'private' : 'public';
+let BOARD_AUTHED = false;
+let BOARD_LOCKED = false;       // private board we cannot currently read
+let BOARD_DISPLAY = BOARD;
+let BOARD_RETENTION = '';
+
+function api(suffix) {
+	return BOARD ? ('/b/' + BOARD + suffix) : suffix;
+}
+
+// Mirror of canonical_slug() in boards.py — keep the two in sync.
+function canonicalizeSlug(raw) {
+	if (!raw) return '';
+	let s = String(raw).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+	s = s.slice(0, 64).replace(/^-+|-+$/g, '');
+	if (!s || s === 'default') return '';
+	return s;
+}
+
+function canPost()   { return BOARD_AUTHED || ['append', 'public'].includes(BOARD_PERM); }
+function canDelete() { return BOARD_AUTHED || BOARD_PERM === 'public'; }
+
+function esc(s) {
+	const d = document.createElement('div');
+	d.textContent = s == null ? '' : String(s);
+	return d.innerHTML;
+}
+
+// ===========================================================================
+// Live updates (poll the board's own update clock).
+// ===========================================================================
 let lastKnownUpdate = 0;
+let pollTimer = null;
+
+function stopPolling() {
+	if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
 
 async function checkForUpdates() {
-	const response = await fetch('/last-update');
+	let response;
+	try {
+		response = await fetch(api('/last-update'));
+	} catch (e) {
+		return;
+	}
+	if (response.status === 401) {   // private board, not authed
+		BOARD_LOCKED = true;
+		stopPolling();               // don't keep hammering a board we can't read
+		renderLocked();
+		return;
+	}
+	if (!response.ok) return;
 	const data = await response.json();
 	if (data.last_update > lastKnownUpdate) {
 		lastKnownUpdate = data.last_update;
-		fetchMessages(); // Fetch messages only if there's an update
-		pulseLive();    // Flash the "live" dot when the board actually changes
+		fetchMessages();
+		pulseLive();
 	}
 }
 
-// Briefly animate the header's live dot to signal a real refresh.
 function pulseLive() {
 	const el = document.getElementById('liveDot');
 	if (!el) return;
 	el.classList.remove('pulse');
-	void el.offsetWidth; // force reflow so the animation restarts
+	void el.offsetWidth;
 	el.classList.add('pulse');
 }
 
-setInterval(checkForUpdates, 5000); // Check every 5 seconds
+pollTimer = setInterval(checkForUpdates, 5000);
 
+// ===========================================================================
+// Compose / upload
+// ===========================================================================
 document.getElementById('messageForm').addEventListener('submit', async function(e) {
 	e.preventDefault();
 	const message = document.getElementById('message').value;
@@ -28,10 +84,10 @@ document.getElementById('messageForm').addEventListener('submit', async function
 	formData.append('message', message);
 
 	const xhr = new XMLHttpRequest();
-	xhr.open('POST', '/message', true);
+	xhr.open('POST', api('/message'), true);
 
 	const progress = document.getElementById('progress');
-	progress.classList.add('active'); // reveal the (otherwise hidden) progress bar
+	progress.classList.add('active');
 
 	xhr.upload.addEventListener('progress', function(e) {
 		if (e.lengthComputable) {
@@ -46,7 +102,6 @@ document.getElementById('messageForm').addEventListener('submit', async function
 	xhr.onload = function() {
 		const uploadProgress = document.getElementById('uploadProgress');
 		if (xhr.status === 200) {
-			const result = JSON.parse(xhr.responseText);
 			document.getElementById('messageForm').reset();
 			document.getElementById('message').value = '';
 			document.getElementById('image-name').textContent = '';
@@ -56,12 +111,16 @@ document.getElementById('messageForm').addEventListener('submit', async function
 			uploadProgress.className = 'upload-complete';
 			document.getElementById('progressBar').style.width = '100%';
 			checkForUpdates();
+		} else if (xhr.status === 401) {
+			uploadProgress.textContent = 'Login required';
+			uploadProgress.className = 'upload-failed';
+			document.getElementById('progressBar').style.width = '0%';
+			openLoginModal(BOARD, BOARD_DISPLAY);
 		} else {
 			uploadProgress.textContent = 'Upload failed';
 			uploadProgress.className = 'upload-failed';
 			document.getElementById('progressBar').style.width = '0%';
 		}
-		// Let the final status read for a moment, then tuck the bar away.
 		setTimeout(function() {
 			progress.classList.remove('active');
 			document.getElementById('progressBar').style.width = '0%';
@@ -73,27 +132,23 @@ document.getElementById('messageForm').addEventListener('submit', async function
 });
 
 document.getElementById('clearButton').addEventListener('click', function() {
-	document.getElementById('messageForm').reset(); // Reset the form
-	// Clear any filenames displayed
+	document.getElementById('messageForm').reset();
 	document.getElementById('image-name').textContent = '';
 	document.getElementById('video-name').textContent = '';
 	document.getElementById('file-name').textContent = '';
 });
 
+// ===========================================================================
+// Rendering helpers (HTML / Markdown / plain)
+// ===========================================================================
 function isHTML(str) {
-	// Parse the string as HTML
 	const doc = new DOMParser().parseFromString(str, "text/html");
-
-	// Check for parsererrors
 	if (doc.querySelector('parsererror')) {
 		return false;
 	}
-
-	// Check if any element nodes exist in the head or body
 	const hasElementNodes = (node) => node.nodeType === 1 && node.tagName.toLowerCase() !== 'html';
 	const bodyHasNodes = Array.from(doc.body.childNodes).some(hasElementNodes);
 	const headHasNodes = Array.from(doc.head.childNodes).some(hasElementNodes);
-
 	return bodyHasNodes || headHasNodes;
 }
 
@@ -101,27 +156,23 @@ function looksLikeMarkdown(str) {
 	if (!str || !str.trim()) {
 		return false;
 	}
-	// Heuristics: only treat text as Markdown when it contains recognizable
-	// block/inline syntax, to avoid mangling ordinary plain text.
 	const patterns = [
-		/^#{1,6}\s+\S/m,                  // ATX headers (# Heading)
-		/^\s*[-*+]\s+\S/m,                // unordered lists
-		/^\s*\d+\.\s+\S/m,                // ordered lists
-		/^\s*>\s+\S/m,                    // blockquotes
-		/```[\s\S]*?```/,                 // fenced code blocks
-		/`[^`\n]+`/,                      // inline code
-		/\*\*[^*\n]+\*\*/,                // bold (**text**)
-		/__[^_\n]+__/,                    // bold (__text__)
-		/\[[^\]]+\]\([^)\s]+\)/,          // links / images
-		/^\s*\|.+\|\s*$/m,                // tables
-		/^(\s*)(-{3,}|\*{3,}|_{3,})\s*$/m,// horizontal rules
-		/^\S.*\n(={3,}|-{3,})\s*$/m,      // setext headers
+		/^#{1,6}\s+\S/m,
+		/^\s*[-*+]\s+\S/m,
+		/^\s*\d+\.\s+\S/m,
+		/^\s*>\s+\S/m,
+		/```[\s\S]*?```/,
+		/`[^`\n]+`/,
+		/\*\*[^*\n]+\*\*/,
+		/__[^_\n]+__/,
+		/\[[^\]]+\]\([^)\s]+\)/,
+		/^\s*\|.+\|\s*$/m,
+		/^(\s*)(-{3,}|\*{3,}|_{3,})\s*$/m,
+		/^\S.*\n(={3,}|-{3,})\s*$/m,
 	];
 	return patterns.some((re) => re.test(str));
 }
 
-// Build the element used to display a text message in a given mode:
-// 'html' (sanitized HTML), 'markdown' (rendered + sanitized), or 'plain' (<pre>).
 function buildTextElement(content, mode) {
 	if (mode === 'html') {
 		const div = document.createElement('div');
@@ -150,8 +201,31 @@ function detectTextMode(content) {
 }
 
 async function fetchMessages() {
-    const response = await fetch('/messages');
+    let response;
+    try {
+        response = await fetch(api('/messages'));
+    } catch (e) {
+        return;
+    }
+    if (response.status === 401) {
+        BOARD_LOCKED = true;
+        stopPolling();
+        renderLocked();
+        return;
+    }
+    if (!response.ok) return;
     const result = await response.json();
+
+    // Refresh board state from the response and re-skin the UI accordingly.
+    BOARD_LOCKED = false;
+    if (BOARD) {
+        BOARD_PERM = result.perm || BOARD_PERM;
+        BOARD_AUTHED = !!result.authed;
+        BOARD_DISPLAY = result.display || BOARD;
+        BOARD_RETENTION = result.retention || '';
+    }
+    applyPermUI();
+
     const messagesDiv = document.getElementById('messages');
     messagesDiv.innerHTML = '';
 
@@ -160,22 +234,17 @@ async function fetchMessages() {
         messageElement.classList.add('message');
         messageElement.id = `message-${message.id}`;
 
-        let contentToCopy = null;       // Will store the text or image element for "copy"
-        let contentElementRef = null;   // Reference so we can toggle raw vs rendered
+        let contentToCopy = null;
+        let contentElementRef = null;
 
-        // Create a container for the message content
         const contentContainer = document.createElement('div');
         contentContainer.classList.add('content-container');
 
-        // Detect the render mode once; reused by the renderer and the toggle below.
         const textMode = message.type === 'text' ? detectTextMode(message.content) : 'plain';
 
         if (message.type === 'text') {
-            // Auto-detect and render HTML or Markdown; otherwise show raw text.
             contentElementRef = buildTextElement(message.content, textMode);
             contentContainer.appendChild(contentElementRef);
-
-            // For the copyToClipboard function, we'll use whichever element is currently displayed
             contentToCopy = contentElementRef;
 
         } else if (message.type === 'image') {
@@ -225,7 +294,6 @@ async function fetchMessages() {
 
         messageElement.appendChild(contentContainer);
 
-        // Meta row (type + time) pinned to the top of the card.
         const meta = document.createElement('div');
         meta.classList.add('message-meta');
         const typeTag = document.createElement('span');
@@ -239,36 +307,32 @@ async function fetchMessages() {
         meta.appendChild(timeTag);
         messageElement.insertBefore(meta, messageElement.firstChild);
 
-        // ---- CREATE A BUTTONS CONTAINER SO WE CAN LINE THEM UP ----
         const buttonsContainer = document.createElement('div');
-        buttonsContainer.classList.add('buttons-container'); 
-        // You can style this class in CSS (e.g., display: inline-flex; gap: 8px; etc.)
+        buttonsContainer.classList.add('buttons-container');
 
-        // Copy button
         const copyButton = document.createElement('button');
         copyButton.textContent = 'Copy';
         copyButton.classList.add('copy-button');
         copyButton.onclick = function() { copyToClipboard(contentToCopy); };
         buttonsContainer.appendChild(copyButton);
 
-        // Delete button
-        const deleteButton = document.createElement('button');
-        deleteButton.textContent = 'Delete';
-        deleteButton.classList.add('delete-button');
-        deleteButton.onclick = function() { deleteMessage(message.id); };
-        buttonsContainer.appendChild(deleteButton);
+        // Only offer delete where the viewer is actually allowed to delete.
+        if (canDelete()) {
+            const deleteButton = document.createElement('button');
+            deleteButton.textContent = 'Delete';
+            deleteButton.classList.add('delete-button');
+            deleteButton.onclick = function() { deleteMessage(message.id); };
+            buttonsContainer.appendChild(deleteButton);
+        }
 
-        // (Optional) If it's text AND rendered (HTML or Markdown), add a "Show Raw" toggle
         if (textMode !== 'plain') {
             const showRawButton = document.createElement('button');
             showRawButton.textContent = 'Show Raw';
             showRawButton.classList.add('show-raw-button');
             messageElement.setAttribute('data-show-raw', 'false');
-            // false => currently showing rendered content
 
             showRawButton.onclick = function() {
                 const isCurrentlyRaw = (messageElement.getAttribute('data-show-raw') === 'true');
-                // When raw, switch back to the detected render mode; otherwise show plain text.
                 const newMode = isCurrentlyRaw ? textMode : 'plain';
                 const newElement = buildTextElement(message.content, newMode);
                 contentContainer.replaceChild(newElement, contentElementRef);
@@ -278,19 +342,17 @@ async function fetchMessages() {
                 showRawButton.textContent = isCurrentlyRaw ? 'Show Raw' : 'Show Rendered';
             };
 
-            // Add the showRawButton to the same container
             buttonsContainer.appendChild(showRawButton);
         }
 
-        // Finally, append the buttons container to the message element
         messageElement.appendChild(buttonsContainer);
-
-        // Append the entire message to the messages div
         messagesDiv.appendChild(messageElement);
     });
 }
 
-
+// ===========================================================================
+// Clipboard
+// ===========================================================================
 function copyToClipboard(element) {
 	if (!element) {
 		showToast('No content to copy!');
@@ -302,7 +364,6 @@ function copyToClipboard(element) {
 				.then(res => res.blob())
 				.then(blob => {
 					if (blob.type === "image/png") {
-						// If the image is already a PNG, use it directly
 						const item = new ClipboardItem({ "image/png": blob });
 						navigator.clipboard.write([item]).then(() => {
 							showToast('Image copied to clipboard!');
@@ -310,7 +371,6 @@ function copyToClipboard(element) {
 							showToast('Failed to copy image: ' + err);
 						});
 					} else {
-						// Convert the image to PNG if it's not already PNG
 						const canvas = document.createElement('canvas');
 						const ctx = canvas.getContext('2d');
 						const img = new Image();
@@ -331,7 +391,6 @@ function copyToClipboard(element) {
 					}
 				});
 		} else {
-			// Fallback: Copy the image URL to the clipboard.
 			navigator.clipboard.writeText(element.src).then(() => {
 				showToast('Image URL copied to clipboard!');
 			}, (err) => {
@@ -360,7 +419,6 @@ function copyToClipboard(element) {
 			showToast('Failed to copy link: ' + err);
 		});
 	} else if (element.tagName === 'VIDEO') {
-		// copy the video URL to the clipboard
 		navigator.clipboard.writeText(element.src).then(() => {
 			showToast('Video URL copied to clipboard!');
 		}, (err) => {
@@ -373,17 +431,15 @@ function copyToClipboard(element) {
 
 document.addEventListener('copy', function(e) {
 	if (document.activeElement.id === 'message') {
-		// Let the browser handle copying if the message box is focused.
 		return;
 	}
 	const selection = window.getSelection();
 	if (!selection.toString().trim()) {
-		e.preventDefault(); // Prevent the default copy behavior
-		// Attempt to copy the newest message
+		e.preventDefault();
 		const newestMessage = document.querySelector('.message');
 		if (newestMessage) {
-			const contentElement = newestMessage.querySelector('pre') 
-				|| newestMessage.querySelector('img') 
+			const contentElement = newestMessage.querySelector('pre')
+				|| newestMessage.querySelector('img')
 				|| newestMessage.querySelector('div');
 			if (contentElement) {
 				copyToClipboard(contentElement);
@@ -399,47 +455,45 @@ function showToast(message) {
 	document.body.appendChild(toast);
 	setTimeout(() => {
 		document.body.removeChild(toast);
-	}, 3000); // The toast message disappears after 3 seconds.
+	}, 3000);
+}
+
+// ===========================================================================
+// Paste / drag-drop (respect post permission; prompt login when blocked)
+// ===========================================================================
+function postFormData(formData) {
+	fetch(api('/message'), { method: 'POST', body: formData })
+		.then(response => {
+			if (response.status === 401) {
+				openLoginModal(BOARD, BOARD_DISPLAY);
+				return null;
+			}
+			return response.json();
+		})
+		.then(result => { if (result) checkForUpdates(); })
+		.catch(error => console.error('Error:', error));
 }
 
 document.body.addEventListener('paste', async function(e) {
 	if (document.activeElement.id === 'message') {
-		// If the message box is focused, let the browser handle pasting.
 		return;
 	}
+	if (!canPost()) return;
 	e.preventDefault();
 	const items = e.clipboardData.items;
 	for (const item of items) {
-		console.log(item.kind, item.type);
 		if (item.kind === 'string') {
-			// Provide a callback function to getAsString
 			item.getAsString((text) => {
 				const formData = new FormData();
 				formData.append('message', text);
-				fetch('/message', {
-					method: 'POST',
-					body: formData,
-				})
-				.then(response => response.json())
-				.then(result => {
-					checkForUpdates();
-				})
-				.catch(error => console.error('Error:', error));
+				postFormData(formData);
 			});
 		} else if (item.kind === 'file' && item.type.startsWith('image/')) {
 			const file = item.getAsFile();
 			const formData = new FormData();
 			formData.append('image', file);
 			formData.append('message', '');
-			fetch('/message', {
-				method: 'POST',
-				body: formData,
-			})
-			.then(response => response.json())
-			.then(result => {
-				checkForUpdates();
-			})
-			.catch(error => console.error('Error:', error));
+			postFormData(formData);
 		}
 	}
 });
@@ -447,28 +501,26 @@ document.body.addEventListener('paste', async function(e) {
 document.body.addEventListener('dragover', function(e) {
 	e.preventDefault();
 	e.stopPropagation();
-	// Optional: Add some visual feedback
 	e.target.style.background = '#f0f0f0';
 });
 
 document.body.addEventListener('dragenter', function(e) {
 	e.preventDefault();
 	e.stopPropagation();
-	// Optional: More visual feedback on drag enter
 	e.target.style.background = '#e0e0e0';
 });
 
 document.body.addEventListener('dragleave', function(e) {
 	e.preventDefault();
 	e.stopPropagation();
-	// Optional: Revert visual feedback
 	e.target.style.background = '';
 });
 
 document.body.addEventListener('drop', function(e) {
 	e.preventDefault();
 	e.stopPropagation();
-	e.target.style.background = ''; // Revert visual feedback
+	e.target.style.background = '';
+	if (!canPost()) { showToast('This board is read-only.'); return; }
 	const files = e.dataTransfer.files;
 	const formData = new FormData();
 	for (const file of files) {
@@ -477,23 +529,18 @@ document.body.addEventListener('drop', function(e) {
 		}
 	}
 	formData.append('message', '');
-	fetch('/message', {
-		method: 'POST',
-		body: formData,
-	}).then(response => response.json())
-	.then(result => {
-		checkForUpdates(); // Update the message list
-	});
+	postFormData(formData);
 });
 
 async function deleteMessage(messageIndex) {
-	// The backend will need to identify messages by an index or ID
-	await fetch(`/delete/${messageIndex}`, { method: 'POST' });
+	const r = await fetch(api(`/delete/${messageIndex}`), { method: 'POST' });
+	if (r.status === 401) { openLoginModal(BOARD, BOARD_DISPLAY); return; }
 	checkForUpdates();
 }
 
 async function deleteAllMessages() {
-	await fetch('/delete_all', { method: 'POST' });
+	const r = await fetch(api('/delete_all'), { method: 'POST' });
+	if (r.status === 401) { openLoginModal(BOARD, BOARD_DISPLAY); return; }
 	checkForUpdates();
 }
 
@@ -512,6 +559,245 @@ document.getElementById('file').addEventListener('change', function() {
 	document.getElementById('file-name').textContent = fileNames;
 });
 
+// ===========================================================================
+// Modal infrastructure
+// ===========================================================================
+function openModal(node) {
+	const modal = document.getElementById('modal');
+	const body = document.getElementById('modalBody');
+	body.innerHTML = '';
+	body.appendChild(node);
+	modal.hidden = false;
+	const focusable = body.querySelector('input, button, textarea, select');
+	if (focusable) focusable.focus();
+}
+
+function closeModal() {
+	document.getElementById('modal').hidden = true;
+	document.getElementById('modalBody').innerHTML = '';
+}
+
+document.getElementById('modal').addEventListener('click', function(e) {
+	if (e.target.hasAttribute('data-close')) closeModal();
+});
+document.addEventListener('keydown', function(e) {
+	if (e.key === 'Escape' && !document.getElementById('modal').hidden) closeModal();
+});
+
+function renderQR(container, text) {
+	try {
+		const qr = qrcode(0, 'L');   // type 0 = auto-size, EC level L for capacity
+		qr.addData(text);
+		qr.make();
+		container.innerHTML = qr.createImgTag(5, 8);
+		const img = container.querySelector('img');
+		if (img) { img.removeAttribute('width'); img.removeAttribute('height'); img.alt = 'TOTP QR code'; }
+	} catch (e) {
+		container.textContent = 'Could not render QR code — use the secret below.';
+	}
+}
+
+// ===========================================================================
+// Board: switch / setup / login / settings / logout
+// ===========================================================================
+document.getElementById('boardForm').addEventListener('submit', async function(e) {
+	e.preventDefault();
+	const raw = document.getElementById('boardInput').value;
+	const slug = canonicalizeSlug(raw);
+	if (!slug) { showToast('Enter a valid board name'); return; }
+	if (slug === BOARD) { document.getElementById('boardInput').value = ''; return; }
+	let r;
+	try {
+		r = await fetch('/b/' + slug + '/access');
+	} catch (err) { showToast('Network error'); return; }
+	if (r.status === 429) { showToast('Too many attempts — slow down'); return; }
+	const j = await r.json().catch(() => ({}));
+	if (!j.ok) { showToast(j.message || 'Invalid board name'); return; }
+	if (j.action === 'open') {
+		window.location = '/b/' + slug;
+	} else if (j.action === 'setup') {
+		openSetupModal(j.slug, j.display, j.secret, j.otpauth);
+	} else if (j.action === 'login') {
+		openLoginModal(j.slug, j.display);
+	}
+});
+
+function openSetupModal(slug, display, secret, otpauth) {
+	const node = document.createElement('div');
+	node.innerHTML = `
+		<h3 class="modal-title">Create board “${esc(display)}”</h3>
+		<p class="modal-sub">This name is free. Protect it with an authenticator app — no password.</p>
+		<div class="qr" id="qrBox"></div>
+		<p class="modal-sub">Scan with your authenticator, or
+			<a href="${esc(otpauth)}" class="otp-link">add it on this device</a>.</p>
+		<div class="secret-row">
+			<code id="secretText">${esc(secret)}</code>
+			<button type="button" id="copySecret" class="btn">Copy</button>
+		</div>
+		<p class="warn">⚠ Save this secret. It is the <strong>only</strong> backup — lose it and the board is gone forever.</p>
+		<form id="codeForm" class="code-form">
+			<input id="codeInput" inputmode="numeric" autocomplete="one-time-code"
+			       placeholder="6-digit code" aria-label="Authenticator code">
+			<button type="submit" class="btn btn-primary">Create &amp; enter</button>
+		</form>
+		<div class="modal-err" id="modalErr"></div>`;
+	openModal(node);
+	renderQR(document.getElementById('qrBox'), otpauth);
+	document.getElementById('copySecret').onclick = function() {
+		navigator.clipboard.writeText(secret).then(() => showToast('Secret copied'));
+	};
+	document.getElementById('codeForm').onsubmit = async function(e) {
+		e.preventDefault();
+		const code = document.getElementById('codeInput').value.trim();
+		const fd = new FormData();
+		fd.append('secret', secret);
+		fd.append('code', code);
+		fd.append('display', display);
+		const r = await fetch('/b/' + slug + '/setup', { method: 'POST', body: fd });
+		if (r.ok) { window.location = '/b/' + slug; return; }
+		const j = await r.json().catch(() => ({}));
+		document.getElementById('modalErr').textContent = j.message || 'Setup failed.';
+	};
+}
+
+function openLoginModal(slug, display) {
+	const node = document.createElement('div');
+	node.innerHTML = `
+		<h3 class="modal-title">Board “${esc(display || slug)}”</h3>
+		<p class="modal-sub">Enter the current code from your authenticator app.</p>
+		<form id="codeForm" class="code-form">
+			<input id="codeInput" inputmode="numeric" autocomplete="one-time-code"
+			       placeholder="6-digit code" aria-label="Authenticator code">
+			<button type="submit" class="btn btn-primary">Log in</button>
+		</form>
+		<div class="modal-err" id="modalErr"></div>`;
+	openModal(node);
+	document.getElementById('codeForm').onsubmit = async function(e) {
+		e.preventDefault();
+		const code = document.getElementById('codeInput').value.trim();
+		const fd = new FormData();
+		fd.append('code', code);
+		const r = await fetch('/b/' + slug + '/login', { method: 'POST', body: fd });
+		if (r.ok) { window.location = '/b/' + slug; return; }
+		const j = await r.json().catch(() => ({}));
+		document.getElementById('modalErr').textContent = j.message || 'Login failed.';
+	};
+}
+
+function openSettingsModal() {
+	const levels = [
+		['private', 'Private', 'No public access. Code required to read or write.'],
+		['read',    'Read-only', 'Anyone can read. Code required to post or delete.'],
+		['append',  'Append', 'Anyone can read and post. Code required to delete.'],
+		['public',  'Public', 'Anyone can read, post, and delete.'],
+	];
+	const radios = levels.map(([val, label, desc]) => `
+		<label class="perm-option">
+			<input type="radio" name="perm" value="${val}" ${val === BOARD_PERM ? 'checked' : ''}>
+			<span><strong>${label}</strong> — ${desc}</span>
+		</label>`).join('');
+	const node = document.createElement('div');
+	node.innerHTML = `
+		<h3 class="modal-title">Settings — “${esc(BOARD_DISPLAY)}”</h3>
+		<form id="settingsForm">
+			<fieldset class="perm-set"><legend>Who can access this board</legend>${radios}</fieldset>
+			<label class="field">
+				<span>Auto-delete messages after</span>
+				<input id="retentionInput" placeholder="inherit site default (e.g. 4h, 7d, 0=never)"
+				       value="${esc(BOARD_RETENTION)}">
+			</label>
+			<div class="modal-err" id="modalErr"></div>
+			<div class="modal-actions">
+				<button type="submit" class="btn btn-primary">Save</button>
+				<button type="button" id="logoutBtn" class="btn">Log out</button>
+				<button type="button" id="deleteBoardBtn" class="btn btn-danger">Delete board</button>
+			</div>
+		</form>`;
+	openModal(node);
+	document.getElementById('settingsForm').onsubmit = async function(e) {
+		e.preventDefault();
+		const perm = node.querySelector('input[name="perm"]:checked').value;
+		const retention = document.getElementById('retentionInput').value.trim();
+		const fd = new FormData();
+		fd.append('perm', perm);
+		fd.append('retention', retention);
+		const r = await fetch(api('/settings'), { method: 'POST', body: fd });
+		if (r.ok) { closeModal(); checkForUpdates(); showToast('Settings saved'); return; }
+		const j = await r.json().catch(() => ({}));
+		document.getElementById('modalErr').textContent = j.message || 'Could not save.';
+	};
+	document.getElementById('logoutBtn').onclick = doLogout;
+	document.getElementById('deleteBoardBtn').onclick = async function() {
+		if (!confirm('Delete this board and everything in it? This cannot be undone.')) return;
+		const r = await fetch(api('/delete_board'), { method: 'POST' });
+		if (r.ok) { window.location = '/'; }
+	};
+}
+
+async function doLogout() {
+	await fetch(api('/logout'), { method: 'POST' });
+	window.location = '/b/' + BOARD;
+}
+
+// ===========================================================================
+// Board context strip + permission-driven visibility
+// ===========================================================================
+function renderLocked() {
+	applyPermUI();
+	const panel = document.getElementById('lockedPanel');
+	const messages = document.getElementById('messages');
+	if (messages) messages.innerHTML = '';
+	panel.hidden = false;
+	panel.innerHTML = `
+		<div class="locked-inner">
+			<div class="locked-icon">🔒</div>
+			<p>This board is private.</p>
+			<button type="button" class="btn btn-primary" id="lockedLogin">Enter code</button>
+		</div>`;
+	document.getElementById('lockedLogin').onclick = function() { openLoginModal(BOARD, BOARD_DISPLAY); };
+	renderBoardContext();
+}
+
+function applyPermUI() {
+	const compose = document.getElementById('messageForm');
+	if (compose) compose.style.display = (canPost() && !BOARD_LOCKED) ? '' : 'none';
+	const delAll = document.getElementById('deleteAllBtn');
+	if (delAll) delAll.style.display = (canDelete() && !BOARD_LOCKED) ? '' : 'none';
+	const panel = document.getElementById('lockedPanel');
+	if (panel && !BOARD_LOCKED) panel.hidden = true;
+	renderBoardContext();
+}
+
+function renderBoardContext() {
+	const ctx = document.getElementById('boardContext');
+	if (!ctx) return;
+	if (!BOARD) {            // default public board: keep the bar out of the way
+		ctx.hidden = true;
+		ctx.innerHTML = '';
+		return;
+	}
+	ctx.hidden = false;
+	const permLabel = { private: 'private', read: 'read-only', append: 'append', public: 'public' }[BOARD_PERM] || BOARD_PERM;
+	let actions = `<a class="board-home" href="/">← Public board</a>`;
+	if (BOARD_AUTHED) {
+		actions += `<button type="button" class="board-action" id="ctxSettings">Settings</button>`;
+		actions += `<button type="button" class="board-action" id="ctxLogout">Log out</button>`;
+	} else {
+		actions += `<button type="button" class="board-action" id="ctxLogin">Log in</button>`;
+	}
+	ctx.innerHTML = `
+		<span class="board-name">${esc(BOARD_DISPLAY)}</span>
+		<span class="perm-badge perm-${BOARD_PERM}">${permLabel}</span>
+		<span class="board-actions">${actions}</span>`;
+	const s = document.getElementById('ctxSettings');
+	if (s) s.onclick = openSettingsModal;
+	const lo = document.getElementById('ctxLogout');
+	if (lo) lo.onclick = doLogout;
+	const li = document.getElementById('ctxLogin');
+	if (li) li.onclick = function() { openLoginModal(BOARD, BOARD_DISPLAY); };
+}
+
 window.onload = function() {
+	applyPermUI();
 	checkForUpdates();
 };

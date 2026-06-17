@@ -34,9 +34,68 @@ Defaults work out of the box. To override them, copy
 
 Configurable keys: `BASE_DIR`, `INDEX_FILE`, `INDEX_REWRITE_INTERVAL`,
 `RETENTION_SIZE`, `RETENTION_TIME`, `MAX_CONTENT_LENGTH`, `HOST`, `PORT`,
-`DEBUG`. Sizes accept bytes or strings like `"16GB"`/`"100MB"`; durations
-accept seconds or strings like `"4h"`/`"30m"`. The default upload limit
-(`MAX_CONTENT_LENGTH`) is 16GB.
+`DEBUG`, plus the private-board keys `BOARDS_DIR`, `REGISTRY_FILE`,
+`SECRET_KEY`, `MAX_SESSIONS`, `PREFER_SECURE_COOKIES`, `TOTP_MAX_FAILURES`,
+`TOTP_BOARD_MAX_FAILURES`, `TOTP_LOCKOUT_TIME`, `ACCESS_RATE_LIMIT`,
+`ACCESS_RATE_WINDOW`, `TRUSTED_PROXY_HOPS`. Sizes accept bytes or strings like
+`"16GB"`/`"100MB"`; durations accept seconds or strings like `"4h"`/`"30m"`. The
+default upload limit (`MAX_CONTENT_LENGTH`) is 16GB. Set `RETENTION_TIME` to `0`
+to disable auto-deletion of messages.
+
+> **Behind a reverse proxy?** Set `TRUSTED_PROXY_HOPS` to the number of proxies
+> in front of wpaste (e.g. `1` for a single nginx). Otherwise every visitor
+> looks like the proxy's IP and shares one rate-limit/lockout bucket.
+
+## Private boards
+
+Open a private board by typing a name into the box in the top bar. Boards are
+protected by a **TOTP** authenticator code — no usernames, no passwords.
+
+- **New name** → a setup screen shows a QR code, an `otpauth://` link (tap it to
+  add the board on the same phone), and the secret. Scan it, enter the code, and
+  you're in. **Save the secret — it is the only backup.** Lose it and the board
+  is gone forever.
+- **Existing board** → if it's private you're asked for a code; if it allows
+  public reading you just see it.
+- A board owner (anyone holding the code) can set the board's **permission**
+  level and **retention** from *Settings*:
+
+  | Level | Public can… | Code required to… |
+  |---|---|---|
+  | Private | nothing | read, post, delete |
+  | Read-only | read | post, delete |
+  | Append | read, post | delete |
+  | Public | read, post, delete | change settings / delete board |
+
+  Sessions: the last `MAX_SESSIONS` (default 7) logins per board stay valid; a
+  newer login silently evicts the oldest device.
+
+### curl / headless
+
+The front page renders as plain text for `curl`/`wget`. Scripts authenticate by
+passing a live code in an `X-TOTP` header (stateless — it does not consume a
+session slot):
+
+```bash
+curl https://host/                                   # public board, plain text
+curl https://host/b/myboard                          # a readable board
+curl -H 'X-TOTP: 123456' https://host/b/myboard      # private board, headless
+curl -H 'X-TOTP: 123456' -d 'message=hi' https://host/b/myboard/message
+```
+
+### Admin (server operator)
+
+There is no admin *account* — administration is done from the server shell while
+the service is **stopped** (it edits the same files the running process caches):
+
+```bash
+python app.py admin list                  # list boards
+python app.py admin remove-board <name>   # delete a board and its data
+python app.py admin regen-totp <name>     # new secret (logs everyone out); prints QR/secret
+```
+
+`regen-totp` is the only recovery path for a lost secret — and means a server
+operator can take over any board (they can already read every file on disk).
 
 ### A note on deletion / disk usage
 
@@ -68,7 +127,6 @@ Delete messages manually
 
 Delete ALL
 
-TODO: ADD user session support to allow private copy paste boards.
-
+Private boards (TOTP-authenticated)
 
 Include TSVZ from https://github.com/yufei-pan/TSVZ

@@ -9,6 +9,11 @@ TSVZ.py
 test.tsv
 mainIndex.tsv
 
+# Private-board runtime state (per-board indexes/files, registry, cookie key)
+boards/
+boards.nsv
+.wpaste_secret
+
 # Local runtime config (keep wpaste.config.example.json tracked)
 wpaste.config.json
 
