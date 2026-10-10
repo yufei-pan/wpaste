@@ -1,0 +1,25 @@
+# systemd unit for wpaste. Copy to /etc/systemd/system/wpaste.service, replace
+# /opt/wpaste with your checkout and the wpaste user/group with the account
+# that should own messages/ and boards/, then:
+#     systemctl daemon-reload && systemctl enable --now wpaste.service
+#
+# Keep --workers 1: wpaste's state is per-process (see gunicorn.conf.py).
+[Unit]
+Description=wpaste Web server
+After=network.target
+# If the checkout lives on a separate mount, uncomment so the unit waits for it:
+#RequiresMountsFor=/opt/wpaste
+
+[Service]
+User=wpaste
+Group=wpaste
+WorkingDirectory=/opt/wpaste
+ExecStart=/opt/wpaste/venv/bin/python3 -m gunicorn app:app --workers 1 -t 0 --threads 8 -b 127.0.0.1:18000
+Restart=always
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+TimeoutStopSec=5
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
