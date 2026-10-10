@@ -120,6 +120,33 @@ body {
     100% { box-shadow: 0 0 0 8px rgba(37, 192, 101, 0); }
 }
 
+/* Connection state (set by setConnState in scripts.js). Only "live" is green. */
+.live[data-state="connecting"] .live-dot,
+.live[data-state="missing"] .live-dot,
+.live[data-state="locked"] .live-dot {
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px var(--muted);
+}
+
+.live[data-state="offline"],
+.live[data-state="error"] {
+    color: var(--danger-ink);
+}
+
+.live[data-state="offline"] .live-dot,
+.live[data-state="error"] .live-dot {
+    background: var(--danger);
+    animation: liveblink 1.6s ease-in-out infinite;
+}
+
+@keyframes liveblink {
+    50% { opacity: 0.3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .live .live-dot { animation: none !important; }
+}
+
 /* --- Help disclosure ------------------------------------------------------- */
 .help {
     background: var(--surface);
@@ -405,6 +432,19 @@ textarea#message::placeholder { color: var(--muted); }
     font-size: 0.9rem;
 }
 .content-container > a:hover { background: var(--accent-ink); }
+
+.content-container > pre.raw-link {
+    margin: 0;
+    padding: 0.75rem 1rem;
+    background: var(--surface-sunken);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    white-space: pre-wrap;
+    word-break: break-all;
+    user-select: all;
+}
 
 .buttons-container {
     display: flex;

@@ -14,8 +14,8 @@
     <header class="topbar">
       <div class="brand">
         <h1>Copy Paste Board</h1>
-        <span class="live" id="liveDot" title="The board refreshes itself every 5 seconds">
-          <span class="live-dot"></span>live
+        <span class="live" id="liveDot" data-state="connecting" role="status" title="Connecting to the server…">
+          <span class="live-dot"></span><span class="live-label">connecting</span>
         </span>
       </div>
 
@@ -28,8 +28,10 @@
       <button type="button" id="deleteAllBtn" onclick="deleteAllMessages()" class="btn btn-danger">Delete all</button>
     </header>
 
+    {% if board %}
     <!-- Shows which board you are on plus per-board actions (login/settings/logout). -->
-    <div class="board-context" id="boardContext" hidden></div>
+    <div class="board-context" id="boardContext"></div>
+    {% endif %}
 
     <div class="layout">
     <aside class="sidebar">
@@ -38,7 +40,7 @@
       <ul>
         <li>Paste (<kbd>⌘/Ctrl</kbd>+<kbd>V</kbd>) or drag &amp; drop files anywhere on the page — or type below and Send.</li>
         <li>Text renders <strong>Markdown</strong> and <strong>HTML</strong> automatically; hit <em>Show Raw</em> on a message to see the source.</li>
-        <li>Each message has its own <em>Copy</em> and <em>Delete</em>. Press <kbd>⌘/Ctrl</kbd>+<kbd>C</kbd> with nothing selected to copy the latest one.</li>
+        <li>Each message has <em>Copy</em>, <em>Copy Links</em> (URL to the raw file), and <em>Delete</em>. Press <kbd>⌘/Ctrl</kbd>+<kbd>C</kbd> with nothing selected to copy the latest one.</li>
         <li>Images, videos, and any other files are supported, several at once.</li>
         <li>Open a <strong>private board</strong> by name from the top bar — it's protected by an authenticator-app code (TOTP), no password.</li>
       </ul>

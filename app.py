@@ -229,10 +229,13 @@ def delete_file_on_disk(index, message_id):
     old_file_path = index[message_id][2]
     new_file_path = f"{old_file_path}.deleted"
     if os.path.exists(old_file_path):
-        if os.path.getsize(old_file_path) > RETENTION_SIZE:
-            os.remove(old_file_path)
-        else:
-            os.rename(old_file_path, new_file_path)
+        try:
+            if os.path.getsize(old_file_path) > RETENTION_SIZE:
+                os.remove(old_file_path)
+            else:
+                os.rename(old_file_path, new_file_path)
+        except OSError as e:
+            print(f"Could not delete/rename {old_file_path}: {e}")
     else:
         print(f"File not found: {old_file_path}")
     print(f"Message {message_id} deleted successfully.")
@@ -564,9 +567,11 @@ def get_messages(slug):
 @app.route('/image/<message_id>', methods=['GET'], defaults={'slug': None})
 @app.route('/video/<message_id>', methods=['GET'], defaults={'slug': None})
 @app.route('/file/<message_id>', methods=['GET'], defaults={'slug': None})
+@app.route('/text/<message_id>', methods=['GET'], defaults={'slug': None})
 @app.route('/b/<slug>/image/<message_id>', methods=['GET'])
 @app.route('/b/<slug>/video/<message_id>', methods=['GET'])
 @app.route('/b/<slug>/file/<message_id>', methods=['GET'])
+@app.route('/b/<slug>/text/<message_id>', methods=['GET'])
 def get_file(slug, message_id):
     state, perm, authed = resolve(slug, 'read')
     index = state.index

@@ -35,31 +35,108 @@ function esc(s) {
 // ===========================================================================
 // Live updates (poll the board's own update clock).
 // ===========================================================================
+const POLL_INTERVAL = 5000;
+const POLL_TIMEOUT = 4000;      // < POLL_INTERVAL so a hung server reads as offline
 let lastKnownUpdate = 0;
+let lastContact = 0;            // Date.now() of the last response from the server
 let pollTimer = null;
+let pollBusy = false;
+let pollAgain = false;
 
 function stopPolling() {
 	if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
+// fetch() with a deadline and no caching, so the indicator reflects a real
+// round trip to the server.
+async function fetchFresh(url, ms) {
+	const ctrl = new AbortController();
+	const timer = setTimeout(() => ctrl.abort(), ms);
+	try {
+		return await fetch(url, { signal: ctrl.signal, cache: 'no-store' });
+	} finally {
+		clearTimeout(timer);
+	}
+}
+
+// Connection indicator. live = the last request reached the server;
+// offline = no response / timeout / 5xx (what a proxy returns when wpaste is
+// down); error = the server answered with another failure; missing = the
+// server is up but this board hasn't been set up; locked = polling stopped
+// because this board needs a code; connecting = no answer yet.
+const CONN_LABELS = { connecting: 'connecting', live: 'live', offline: 'offline', error: 'error', missing: 'no board', locked: 'locked' };
+
+function setConnState(state, detail) {
+	const el = document.getElementById('liveDot');
+	if (!el) return;
+	if (state === 'live') lastContact = Date.now();
+	const since = lastContact ? ' Last contact ' + new Date(lastContact).toLocaleTimeString() + '.' : '';
+	el.title = {
+		connecting: 'Connecting to the server…',
+		live: 'Connected — checking for new messages every ' + (POLL_INTERVAL / 1000) + ' seconds.',
+		offline: "Can't reach the server (" + detail + ').' + since + ' Retrying every ' + (POLL_INTERVAL / 1000) + ' seconds.',
+		error: 'The server answered with an error (' + detail + ').' + since + ' Retrying every ' + (POLL_INTERVAL / 1000) + ' seconds.',
+		missing: "Connected, but this board doesn't exist yet.",
+		locked: 'Not updating — this board needs a code to read.',
+	}[state];
+	if (el.dataset.state === state) return;
+	el.dataset.state = state;
+	const label = el.querySelector('.live-label');
+	if (label) label.textContent = CONN_LABELS[state];
+}
+
+function markHttpError(status) {
+	if (status === 404) { lastContact = Date.now(); setConnState('missing'); return; }
+	setConnState(status >= 500 ? 'offline' : 'error', 'HTTP ' + status);
+}
+
+function markFetchError(e) {
+	setConnState('offline', e && e.name === 'AbortError' ? 'timed out' : 'network error');
+}
+
 async function checkForUpdates() {
+	// Callers (post, delete, settings, timers) can overlap; coalesce them into
+	// one in-flight poll plus at most one follow-up.
+	if (pollBusy) { pollAgain = true; return; }
+	pollBusy = true;
+	try {
+		do {
+			pollAgain = false;
+			await pollOnce();
+		} while (pollAgain);
+	} finally {
+		pollBusy = false;
+	}
+}
+
+async function pollOnce() {
 	let response;
 	try {
-		response = await fetch(api('/last-update'));
+		response = await fetchFresh(api('/last-update'), POLL_TIMEOUT);
 	} catch (e) {
+		markFetchError(e);
 		return;
 	}
 	if (response.status === 401) {   // private board, not authed
 		BOARD_LOCKED = true;
 		stopPolling();               // don't keep hammering a board we can't read
+		setConnState('locked');
 		renderLocked();
 		return;
 	}
-	if (!response.ok) return;
-	const data = await response.json();
-	if (data.last_update > lastKnownUpdate) {
+	if (!response.ok) { markHttpError(response.status); return; }
+	let data;
+	try {
+		data = await response.json();
+	} catch (e) {
+		setConnState('error', 'bad response');
+		return;
+	}
+	setConnState('live');
+	// Only advance once the messages actually loaded, so a failed fetch is
+	// retried on the next poll instead of leaving the list stale.
+	if (data.last_update > lastKnownUpdate && await fetchMessages()) {
 		lastKnownUpdate = data.last_update;
-		fetchMessages();
 		pulseLive();
 	}
 }
@@ -72,7 +149,15 @@ function pulseLive() {
 	el.classList.add('pulse');
 }
 
-pollTimer = setInterval(checkForUpdates, 5000);
+pollTimer = setInterval(checkForUpdates, POLL_INTERVAL);
+
+// Background tabs get their timers throttled (to once a minute in Chrome), so
+// re-check as soon as the tab is visible again or the network comes back.
+document.addEventListener('visibilitychange', function() {
+	if (!document.hidden && pollTimer) checkForUpdates();
+});
+window.addEventListener('online', function() { if (pollTimer) checkForUpdates(); });
+window.addEventListener('offline', function() { if (pollTimer) setConnState('offline', 'browser is offline'); });
 
 // ===========================================================================
 // Compose / upload
@@ -200,21 +285,30 @@ function detectTextMode(content) {
 	return 'plain';
 }
 
+// Returns true once the list has been re-rendered from the server.
 async function fetchMessages() {
     let response;
     try {
-        response = await fetch(api('/messages'));
+        response = await fetchFresh(api('/messages'), 30000);
     } catch (e) {
-        return;
+        markFetchError(e);
+        return false;
     }
     if (response.status === 401) {
         BOARD_LOCKED = true;
         stopPolling();
+        setConnState('locked');
         renderLocked();
-        return;
+        return false;
     }
-    if (!response.ok) return;
-    const result = await response.json();
+    if (!response.ok) { markHttpError(response.status); return false; }
+    let result;
+    try {
+        result = await response.json();
+    } catch (e) {
+        setConnState('error', 'bad response');
+        return false;
+    }
 
     // Refresh board state from the response and re-skin the UI accordingly.
     BOARD_LOCKED = false;
@@ -235,7 +329,7 @@ async function fetchMessages() {
         messageElement.id = `message-${message.id}`;
 
         let contentToCopy = null;
-        let contentElementRef = null;
+        const contentRef = { el: null };
 
         const contentContainer = document.createElement('div');
         contentContainer.classList.add('content-container');
@@ -243,9 +337,9 @@ async function fetchMessages() {
         const textMode = message.type === 'text' ? detectTextMode(message.content) : 'plain';
 
         if (message.type === 'text') {
-            contentElementRef = buildTextElement(message.content, textMode);
-            contentContainer.appendChild(contentElementRef);
-            contentToCopy = contentElementRef;
+            contentRef.el = buildTextElement(message.content, textMode);
+            contentContainer.appendChild(contentRef.el);
+            contentToCopy = contentRef.el;
 
         } else if (message.type === 'image') {
             if (message.filename && message.filename !== 'image.png') {
@@ -257,7 +351,7 @@ async function fetchMessages() {
             img.src = message.content;
             img.style.maxWidth = '100%';
             contentContainer.appendChild(img);
-            contentElementRef = img;
+            contentRef.el = img;
             contentToCopy = img;
 
         } else if (message.type === 'video') {
@@ -271,7 +365,7 @@ async function fetchMessages() {
             video.controls = true;
             video.style.maxWidth = '100%';
             contentContainer.appendChild(video);
-            contentElementRef = video;
+            contentRef.el = video;
             contentToCopy = video;
 
         } else if (message.type === 'file') {
@@ -280,7 +374,7 @@ async function fetchMessages() {
             a.textContent = message.filename || 'Download File';
             a.download = '';
             contentContainer.appendChild(a);
-            contentElementRef = a;
+            contentRef.el = a;
             contentToCopy = a;
 
         } else {
@@ -288,7 +382,7 @@ async function fetchMessages() {
             const pre = document.createElement('pre');
             pre.textContent = 'Unknown message type';
             contentContainer.appendChild(pre);
-            contentElementRef = pre;
+            contentRef.el = pre;
             contentToCopy = pre;
         }
 
@@ -316,6 +410,16 @@ async function fetchMessages() {
         copyButton.onclick = function() { copyToClipboard(contentToCopy); };
         buttonsContainer.appendChild(copyButton);
 
+        const copyLinkButton = document.createElement('button');
+        copyLinkButton.textContent = 'Copy Links';
+        copyLinkButton.classList.add('copy-link-button');
+        copyLinkButton.onclick = function() {
+            const url = messageRawUrl(message);
+            if (!url) { showToast('No link available'); return; }
+            copyLinkToClipboard(url, contentContainer, contentRef);
+        };
+        buttonsContainer.appendChild(copyLinkButton);
+
         // Only offer delete where the viewer is actually allowed to delete.
         if (canDelete()) {
             const deleteButton = document.createElement('button');
@@ -335,8 +439,8 @@ async function fetchMessages() {
                 const isCurrentlyRaw = (messageElement.getAttribute('data-show-raw') === 'true');
                 const newMode = isCurrentlyRaw ? textMode : 'plain';
                 const newElement = buildTextElement(message.content, newMode);
-                contentContainer.replaceChild(newElement, contentElementRef);
-                contentElementRef = newElement;
+                contentContainer.replaceChild(newElement, contentRef.el);
+                contentRef.el = newElement;
                 contentToCopy = newElement;
                 messageElement.setAttribute('data-show-raw', isCurrentlyRaw ? 'false' : 'true');
                 showRawButton.textContent = isCurrentlyRaw ? 'Show Raw' : 'Show Rendered';
@@ -348,11 +452,56 @@ async function fetchMessages() {
         messageElement.appendChild(buttonsContainer);
         messagesDiv.appendChild(messageElement);
     });
+    return true;
 }
 
 // ===========================================================================
 // Clipboard
 // ===========================================================================
+function absoluteUrl(pathOrUrl) {
+	if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
+	return window.location.origin + (pathOrUrl.startsWith('/') ? pathOrUrl : '/' + pathOrUrl);
+}
+
+function messageRawUrl(message) {
+	if (message.type === 'text') {
+		return absoluteUrl(api('/text/' + message.id));
+	}
+	if (message.type === 'image' || message.type === 'video' || message.type === 'file') {
+		return absoluteUrl(message.content);
+	}
+	return null;
+}
+
+function clipboardWriteTextSupported() {
+	return !!(navigator.clipboard && typeof navigator.clipboard.writeText === 'function');
+}
+
+function showRawLinkFallback(url, contentContainer, contentRef) {
+	showToast('Clipboard unavailable — copy the link below');
+	const pre = document.createElement('pre');
+	pre.classList.add('raw-link');
+	pre.textContent = url;
+	if (contentRef.el && contentRef.el.parentNode === contentContainer) {
+		contentContainer.replaceChild(pre, contentRef.el);
+	} else {
+		contentContainer.prepend(pre);
+	}
+	contentRef.el = pre;
+}
+
+function copyLinkToClipboard(url, contentContainer, contentRef) {
+	if (!clipboardWriteTextSupported()) {
+		showRawLinkFallback(url, contentContainer, contentRef);
+		return;
+	}
+	navigator.clipboard.writeText(url).then(() => {
+		showToast('Link copied to clipboard!');
+	}, () => {
+		showRawLinkFallback(url, contentContainer, contentRef);
+	});
+}
+
 function copyToClipboard(element) {
 	if (!element) {
 		showToast('No content to copy!');
