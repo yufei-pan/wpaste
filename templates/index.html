@@ -2,6 +2,17 @@
 <html>
 <head>
     <meta charset="UTF-8">
+{% if secure_cookies %}
+    <script>
+        // The session cookie is Secure, so over plain HTTP the browser drops it
+        // and a board login never sticks. Hop to HTTPS on the default port
+        // (left alone for localhost and explicit-port dev URLs).
+        if (location.protocol === 'http:' && !location.port &&
+            !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname)) {
+            location.replace('https://' + location.host + location.pathname + location.search + location.hash);
+        }
+    </script>
+{% endif %}
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Copy Paste Board</title>
     <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='logo.svg') }}">

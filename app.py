@@ -433,7 +433,8 @@ def index(slug):
         abort(404)
     if wants_plaintext(request):
         return Response(render_plaintext(cslug), mimetype='text/plain; charset=utf-8')
-    return render_template('index.html', board=(cslug or ''), version=version)
+    return render_template('index.html', board=(cslug or ''), version=version,
+                           secure_cookies=PREFER_SECURE_COOKIES)
 
 @app.route('/favicon.ico')
 def favicon():
