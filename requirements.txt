@@ -1,6 +1,5 @@
 filetype
 Flask
-datetime
-TSVZ
+TSVZ>=3.39
 gunicorn
 pyotp
