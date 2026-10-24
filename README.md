@@ -20,6 +20,13 @@ gunicorn app:app
 > `gunicorn.conf.py` (auto-loaded when you run `gunicorn app:app` from this
 > directory) pins `workers = 1` and uses threads for concurrency.
 
+To run the tests:
+
+```bash
+pip install -r requirements-dev.txt
+pytest
+```
+
 ## Configuration
 
 Defaults work out of the box. To override them, copy
@@ -39,7 +46,8 @@ Configurable keys: `BASE_DIR`, `INDEX_FILE`, `INDEX_REWRITE_INTERVAL`,
 `SECRET_KEY`, `MAX_SESSIONS`, `PREFER_SECURE_COOKIES`, `TOTP_MAX_FAILURES`,
 `TOTP_BOARD_MAX_FAILURES`, `TOTP_LOCKOUT_TIME`, `ACCESS_RATE_LIMIT`,
 `ACCESS_RATE_WINDOW`, `TRUSTED_PROXY_HOPS`. Sizes accept bytes or strings like
-`"16GB"`/`"100MB"`; durations accept seconds or strings like `"4h"`/`"30m"`. The
+`"16GB"`/`"100MB"`; durations accept seconds or strings like `"4h"`/`"30m"`
+(neither can be negative — `0`, not `-1`, means "never"). The
 default upload limit (`MAX_CONTENT_LENGTH`) is 16GB; a single text message can
 be up to 64MB. Set `RETENTION_TIME` to `0` to disable auto-deletion of
 messages. Retention is enforced by a background sweep every minute, so it also
@@ -89,7 +97,9 @@ curl -H 'X-TOTP: 123456' -d 'message=hi' https://host/b/myboard/message
 ### Admin (server operator)
 
 There is no admin *account* — administration is done from the server shell while
-the service is **stopped** (it edits the same files the running process caches):
+the service is **stopped** (it edits the same files the running process caches).
+The commands work from any directory: they use the data in wpaste's own folder,
+where the server runs.
 
 ```bash
 python app.py admin list                  # list boards
@@ -114,26 +124,18 @@ Uploaded files are served with `Content-Security-Policy: sandbox` (PDFs
 excepted), so an uploaded HTML or SVG page can be viewed but never runs script
 as wpaste.
 
-![screenshot1](/etc/Screenshot 2024-05-01 145831.png)
+## Features
 
-Currently support:
+![The public board](etc/screenshot-board.png)
 
-Text, HTML, and Imgaes
-![screenshot2](/etc/Screenshot 2024-05-01 145853.png)
-![screenshot3](/etc/Screenshot 2024-05-01 150454.png)
+- Text, Markdown, HTML, images, videos, and any other files — several at once
+- Paste (<kbd>Ctrl/⌘</kbd>+<kbd>V</kbd>) or drag and drop anywhere on the page, or pick files
+- *Copy* gives back exactly the text that was pasted; <kbd>Ctrl/⌘</kbd>+<kbd>C</kbd> with nothing selected copies the newest message
+- Delete messages one at a time or all at once; messages expire on their own (`RETENTION_TIME`)
+- Live updates across every open browser
+- Private boards protected by an authenticator-app code (TOTP)
+- A plain-text view and headless posting for `curl`
 
-Drag and Drop
+![A private board's settings](etc/screenshot-private-board.png)
 
-Ctrl C (CMD C)
-
-Ctrl V (CMD V)
-
-Select file
-
-Delete messages manually
-
-Delete ALL
-
-Private boards (TOTP-authenticated)
-
-Include TSVZ from https://github.com/yufei-pan/TSVZ
+Storage uses [TSVZ](https://github.com/yufei-pan/TSVZ).

@@ -1,0 +1,2 @@
+-r requirements.txt
+pytest  # test runner (dev only)
