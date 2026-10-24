@@ -9,6 +9,8 @@ import sys
 import random
 import json
 import secrets
+import mimetypes
+import threading
 import TSVZ
 #import imghdr
 import filetype
@@ -40,6 +42,7 @@ DEFAULT_CONFIG = {
     'INDEX_REWRITE_INTERVAL': 3600 * 20,            # TSVZ compaction interval (s)
     'RETENTION_SIZE': '100MB',                       # hard-delete files larger than this
     'RETENTION_TIME': '4h',                          # purge entries older than this (0 = never)
+    'DELETED_RETENTION_TIME': '7d',                  # remove soft-deleted (.deleted) files after this (0 = keep forever)
     'MAX_CONTENT_LENGTH': '16GB',                    # max accepted upload size
     'HOST': '127.0.0.1',                             # dev server bind host
     'PORT': 5000,                                    # dev server bind port
@@ -112,6 +115,7 @@ INDEX_FILE = _config['INDEX_FILE']
 INDEX_REWRITE_INTERVAL = int(_config['INDEX_REWRITE_INTERVAL'])
 RETENTION_SIZE = parse_size(_config['RETENTION_SIZE'])  # hard-delete files bigger than this
 RETENTION_TIME = parse_duration(_config['RETENTION_TIME'])  # purge entries older than this (0 = never)
+DELETED_RETENTION_TIME = parse_duration(_config['DELETED_RETENTION_TIME'])  # 0 = keep .deleted files forever
 MAX_CONTENT_LENGTH = parse_size(_config['MAX_CONTENT_LENGTH'])
 BOARDS_DIR = _config['BOARDS_DIR']
 REGISTRY_FILE = _config['REGISTRY_FILE']
@@ -182,6 +186,12 @@ def resolve_secret_key(config):
 
 app = Flask(__name__)
 app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
+# A text message arrives as a form field, which Flask holds in memory and caps
+# at 500 KB by default — too small for a pasted log. Raise it, but keep a bound.
+app.config['MAX_FORM_MEMORY_SIZE'] = min(MAX_CONTENT_LENGTH, 64 * 1024**2)
+# get_file has several default-board rules (/image, /video, /file, /text); by
+# default Werkzeug 308-redirects all but one of them to that one.
+app.url_map.redirect_defaults = False
 app.config['SECRET_KEY'] = resolve_secret_key(_config)
 app.config['SESSION_COOKIE_HTTPONLY'] = True
 app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
@@ -222,7 +232,8 @@ def validate_image(stream):
 
 def delete_file_on_disk(index, message_id):
     '''Soft-delete (rename to <path>.deleted) unless the file exceeds
-    RETENTION_SIZE, in which case hard-delete. Mirrors the original behavior.'''
+    RETENTION_SIZE, in which case hard-delete. The sweep removes .deleted files
+    DELETED_RETENTION_TIME after their deletion.'''
     if message_id not in index:
         print(f"Message {message_id} not found in index.")
         return
@@ -234,6 +245,7 @@ def delete_file_on_disk(index, message_id):
                 os.remove(old_file_path)
             else:
                 os.rename(old_file_path, new_file_path)
+                os.utime(new_file_path)   # the cleanup clock starts at deletion
         except OSError as e:
             print(f"Could not delete/rename {old_file_path}: {e}")
     else:
@@ -333,13 +345,17 @@ def resolve(slug, action):
             abort(404)
         return default_board, PUBLIC_PERM, False
     cslug = canonical_slug(slug)
-    if cslug is None or not boards.exists(cslug):
+    m = boards.meta(cslug) if cslug else None
+    if m is None:
         abort(404)
-    perm = boards.meta(cslug)['perm']
+    perm = m['perm']
     authed = board_authed(cslug)
     if not can(perm, action, authed):
         _deny(perm)
-    return boards.state(cslug), perm, authed
+    state = boards.state(cslug)
+    if state is None:                 # deleted while this request was in flight
+        abort(404)
+    return state, perm, authed
 
 def board_retention(slug):
     '''Resolve a board's retention (seconds; 0 = never purge).'''
@@ -354,11 +370,89 @@ def board_retention(slug):
         return RETENTION_TIME
 
 def _purge(state, message_id):
-    '''Internal delete used by lazy cleanup (no permission check).'''
+    '''Internal delete used by retention cleanup (no permission check).'''
     if message_id in state.index:
         delete_file_on_disk(state.index, message_id)
         del state.index[message_id]
         state.bump()
+
+def _stale(row, retention, now):
+    '''True if a message row is due for purging: older than `retention`
+    (0 = never), or blank — a tombstone written by TSVZ < 3.39 reloads as an
+    empty row, and purging it writes a proper one.'''
+    try:
+        return bool(retention) and now - float(row[1]) > retention
+    except (ValueError, TypeError, IndexError):
+        return True
+
+def live_rows(state):
+    '''Return a board's live messages as [(unix_time, id, row)], newest first,
+    purging the stale ones and any whose file is gone.'''
+    retention = board_retention(state.slug)
+    now = time.time()
+    rows, stale = [], []
+    # Iterate over a snapshot of the keys so a concurrent POST/delete cannot
+    # mutate the index mid-iteration; re-check membership before each access.
+    for mid in list(state.index):
+        row = state.index[mid] if mid in state.index else None
+        if row is None:
+            continue
+        if _stale(row, retention, now) or not os.path.exists(row[2]):
+            stale.append(mid)
+            continue
+        rows.append((float(row[1]), mid, row))
+    for mid in stale:
+        _purge(state, mid)
+    rows.sort(reverse=True)
+    return rows
+
+
+# ---------------------------------------------------------------------------
+# Background sweep: retention holds even on boards nobody opens, and
+# soft-deleted files are removed once DELETED_RETENTION_TIME has passed.
+# ---------------------------------------------------------------------------
+SWEEP_INTERVAL = 60   # seconds
+
+def sweep():
+    states = [default_board] + [boards.state(m['slug']) for m in boards.list_boards()]
+    for state in states:
+        if state is None:             # deleted since the listing
+            continue
+        try:
+            live_rows(state)
+        except Exception as e:
+            print(f"Sweep of board {state.slug or '(default)'} failed: {e}")
+    if not DELETED_RETENTION_TIME:
+        return
+    cutoff = time.time() - DELETED_RETENTION_TIME
+    for top in (BASE_DIR, BOARDS_DIR):
+        for dirpath, _, names in os.walk(top):
+            for name in names:
+                if not name.endswith('.deleted'):
+                    continue
+                path = os.path.join(dirpath, name)
+                try:
+                    if os.path.getmtime(path) < cutoff:
+                        os.remove(path)
+                except OSError as e:
+                    print(f"Could not remove {path}: {e}")
+
+def _sweep_loop():
+    while True:
+        try:
+            sweep()
+        except Exception as e:
+            print(f"Sweep failed: {e}")
+        time.sleep(SWEEP_INTERVAL)
+
+_sweeper_started = threading.Lock()   # acquired once, by whoever starts the sweeper
+
+@app.before_request
+def start_sweeper():
+    # Started by the first request rather than at import, so only the serving
+    # process sweeps (never the debug reloader's parent or the admin CLI).
+    if _sweeper_started.acquire(blocking=False):
+        threading.Thread(target=_sweep_loop, name='wpaste-sweep', daemon=True).start()
 
 
 # ---------------------------------------------------------------------------
@@ -386,32 +480,19 @@ def render_plaintext(slug):
         state = boards.state(slug)
         title = f"wpaste — board '{m['display']}' ({perm})"
     prefix = f'/b/{slug}' if slug else ''
-    retention = board_retention(slug)
-    now = datetime.now().timestamp()
-    rows = []
-    for mid in list(state.index):
-        r = state.index[mid] if mid in state.index else None
-        if r is None:
-            continue
-        try:                              # skip blank/partial (tombstone) rows
-            unix_time = float(r[1])
-        except (ValueError, TypeError, IndexError):
-            continue
-        if retention and now - unix_time > retention:
-            continue
-        if not r[2] or not os.path.exists(r[2]):
-            continue
-        rows.append((unix_time, mid, r[2], r[3], r[4]))
-    rows.sort(reverse=True)
+    rows = live_rows(state)
 
     lines = [title, '=' * len(title)]
     if not rows:
         lines.append('(empty)')
-    for unix_time, mid, fpath, mtype, fname in rows:
+    for unix_time, mid, (_, _, fpath, mtype, fname) in rows:
         ts = datetime.fromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
         if mtype == 'text':
-            with open(fpath) as fh:
-                body = fh.read()
+            try:
+                with open(fpath) as fh:
+                    body = fh.read()
+            except OSError:               # purged since live_rows() looked
+                continue
             lines.append(f'[{ts}] {mid} text')
             lines.append(body.rstrip('\n'))
         else:
@@ -463,44 +544,25 @@ def post_message(slug):
         index[file_id] = [str(datetime.now().timestamp()), file_path, 'text', f"{file_id}.txt"]
         state.bump()
 
-    if 'image' in request.files:
-        for image in request.files.getlist('image'):
-            if image.filename != '':
-                file_id = generate_random_id(index)
-                image_extension = validate_image(image.stream)
+    for field in ('image', 'video', 'file'):
+        for upload in request.files.getlist(field):
+            if upload.filename == '':
+                continue
+            msg_type, extension = field, os.path.splitext(upload.filename)[1]
+            if field == 'image':
+                # Keep what the sniffer can't confirm as an image (e.g. SVG) as
+                # a plain file rather than refusing it.
+                image_extension = validate_image(upload.stream)
                 if image_extension:
-                    file_path = os.path.join(dir_path, f"{file_id}.{image_extension}")
-                    image.save(file_path)
-                    print(f"Image saved to {file_path}")
-                    index[file_id] = [str(datetime.now().timestamp()), file_path, 'image', image.filename]
-                    state.bump()
+                    extension = f".{image_extension}"
                 else:
-                    return jsonify({"success": False, "message": f"Invalid image file: {image.filename}"})
-
-    if 'video' in request.files:
-        for video in request.files.getlist('video'):
-            if video.filename != '':
-                file_id = generate_random_id(index)
-                video_extension = os.path.splitext(video.filename)[1]
-                if video_extension:
-                    file_path = os.path.join(dir_path, f"{file_id}{video_extension}")
-                    video.save(file_path)
-                    print(f"Video saved to {file_path}")
-                    index[file_id] = [str(datetime.now().timestamp()), file_path, 'video', video.filename]
-                    state.bump()
-                else:
-                    return jsonify({"success": False, "message": f"Invalid video file: {video.filename}"})
-
-    if 'file' in request.files:
-        for file in request.files.getlist('file'):
-            if file.filename != '':
-                file_id = generate_random_id(index)
-                file_extension = os.path.splitext(file.filename)[1]
-                file_path = os.path.join(dir_path, f"{file_id}{file_extension}")
-                file.save(file_path)
-                print(f"File saved to {file_path}")
-                index[file_id] = [str(datetime.now().timestamp()), file_path, 'file', file.filename]
-                state.bump()
+                    msg_type = 'file'
+            file_id = generate_random_id(index)
+            file_path = os.path.join(dir_path, f"{file_id}{extension}")
+            upload.save(file_path)
+            print(f"{msg_type.capitalize()} saved to {file_path}")
+            index[file_id] = [str(datetime.now().timestamp()), file_path, msg_type, upload.filename]
+            state.bump()
 
     return jsonify({"success": True, "message": "Message saved successfully."})
 
@@ -516,49 +578,21 @@ def get_last_update(slug):
 @app.route('/b/<slug>/messages', methods=['GET'])
 def get_messages(slug):
     state, perm, authed = resolve(slug, 'read')
-    index = state.index
-    retention = board_retention(state.slug)
     prefix = f'/b/{state.slug}' if state.slug else ''
     messages = []
-    message_to_delete = []
-    now = datetime.now().timestamp()
-    # Iterate over a snapshot of the keys so a concurrent POST/delete cannot
-    # mutate the index mid-iteration; re-check membership before each access.
-    for id in list(index):
-        row = index[id] if id in index else None
-        if row is None:
-            continue
-        # A deleted entry can resurrect as a blank/partial row after a TSVZ
-        # reload (its tombstone reloads with empty fields). Treat any row whose
-        # timestamp won't parse as a stale entry to reap, rather than letting
-        # float('') take down the whole listing with a 500.
-        try:
-            unix_time = float(row[1])
-        except (ValueError, TypeError, IndexError):
-            message_to_delete.append(id)
-            continue
+    for unix_time, id, row in live_rows(state):
         file_path, msg_type = row[2], row[3]
-        if retention and now - unix_time > retention:
-            message_to_delete.append(id)
-            continue
-        if not os.path.exists(file_path):
-            message_to_delete.append(id)
-            continue
-        if msg_type == 'image':
-            content = f'{prefix}/image/{id}'
-        elif msg_type == 'text':
-            with open(file_path, 'r') as file:
-                content = file.read()
-        elif msg_type == 'video':
-            content = f'{prefix}/video/{id}'
-        elif msg_type == 'file':
-            content = f'{prefix}/file/{id}'
+        if msg_type == 'text':
+            try:
+                with open(file_path, 'r') as file:
+                    content = file.read()
+            except OSError:               # purged since live_rows() looked
+                continue
+        elif msg_type in ('image', 'video', 'file'):
+            content = f'{prefix}/{msg_type}/{id}'
         else:
             content = "Content type not supported."
         messages.append({"id": id, "content": content, "timestamp": int(unix_time), "type": msg_type, "filename": row[4]})
-    messages.reverse()
-    for id in message_to_delete:
-        _purge(state, id)
     meta = boards.meta(state.slug) if state.slug else None
     return jsonify({"messages": messages, "board": state.slug, "perm": perm,
                     "authed": authed, "display": (meta['display'] if meta else None),
@@ -577,19 +611,30 @@ def get_file(slug, message_id):
     state, perm, authed = resolve(slug, 'read')
     index = state.index
     message_id = os.path.splitext(message_id)[0]  # tolerate an extension in the URL
-    if message_id in index:
-        file_path = index[message_id][2]
-        # Confine to this board's directory before serving.
-        base = os.path.normpath(state.base_dir)
-        if os.path.commonpath([base, os.path.normpath(file_path)]) != base:
-            abort(404, description="Path not valid.")
-        if os.path.exists(file_path):
-            mime = filetype.guess(file_path)
-            if mime is not None:
-                return send_file(file_path, mimetype=mime.mime, download_name=index[message_id][4])
-            return send_file(file_path, download_name=index[message_id][4])
+    row = index[message_id] if message_id in index else None
+    if row is None:
+        abort(404, description="Message not found.")
+    if _stale(row, board_retention(state.slug), time.time()):
+        _purge(state, message_id)
+        abort(404, description="Message not found.")
+    file_path, download_name = row[2], row[4]
+    # Confine to this board's directory before serving.
+    base = os.path.normpath(state.base_dir)
+    if os.path.commonpath([base, os.path.normpath(file_path)]) != base:
+        abort(404, description="Path not valid.")
+    if not os.path.exists(file_path):
         abort(404, description="File not found.")
-    abort(404, description="Message not found.")
+    kind = filetype.guess(file_path)
+    mime = kind.mime if kind else (mimetypes.guess_type(download_name)[0] or 'application/octet-stream')
+    response = send_file(file_path, mimetype=mime, download_name=download_name)
+    response.headers['X-Content-Type-Options'] = 'nosniff'
+    # An uploaded HTML/SVG page opened directly runs in a sandbox with no
+    # script and its own origin, so it can never act as wpaste (read or change
+    # boards with the viewer's session). PDF is exempt: browsers refuse to show
+    # a sandboxed PDF, and it can't script this origin anyway.
+    if mime != 'application/pdf':
+        response.headers['Content-Security-Policy'] = 'sandbox'
+    return response
 
 
 @app.route('/delete_all', methods=['POST'], defaults={'slug': None})

@@ -206,8 +206,7 @@ class Boards:
                                     verbose=False)
         self._states = {}             # slug -> BoardState
         # Reentrant: mutators hold it across a read-modify-write AND call the
-        # readers below (which also take it), and readers must take it so they
-        # never observe the registry mid-rebuild in delete().
+        # readers below (which also take it).
         self._lock = threading.RLock()
 
     # --- existence / metadata ---------------------------------------------
@@ -241,18 +240,21 @@ class Boards:
 
     # --- per-board live state ---------------------------------------------
     def state(self, slug):
-        '''Lazily create/load a named board's BoardState (index + base dir).'''
-        st = self._states.get(slug)
-        if st is None:
-            base_dir = os.path.join(self.boards_dir, slug)
-            os.makedirs(base_dir, exist_ok=True)
-            index = TSVZ.TSVZed(os.path.join(base_dir, 'index.tsv'),
-                                header=['id', 'unix_time', 'path', 'type', 'filename'],
-                                rewrite_interval=self.index_rewrite_interval,
-                                verbose=False)
-            st = BoardState(slug, index, base_dir)
-            self._states[slug] = st
-        return st
+        '''Lazily load a registered board's BoardState (index + base dir), or
+        None if there is no such board. Locked so concurrent first requests
+        share one index (two TSVZ writers on one file would lose messages).'''
+        with self._lock:
+            st = self._states.get(slug)
+            if st is None and slug in self.registry:
+                base_dir = os.path.join(self.boards_dir, slug)
+                os.makedirs(base_dir, exist_ok=True)
+                index = TSVZ.TSVZed(os.path.join(base_dir, 'index.tsv'),
+                                    header=['id', 'unix_time', 'path', 'type', 'filename'],
+                                    rewrite_interval=self.index_rewrite_interval,
+                                    verbose=False)
+                st = BoardState(slug, index, base_dir)
+                self._states[slug] = st
+            return st
 
     # --- lifecycle ---------------------------------------------------------
     def create(self, slug, display, perm=DEFAULT_PERM, retention='', secret=None):
@@ -306,16 +308,14 @@ class Boards:
         return secret
 
     def delete(self, slug):
-        '''Remove a board: drop its registry row, files, and live state.
-
-        TSVZ in this version does not persist a single-key deletion across a
-        reload (the tombstone reloads as an empty row), so we rebuild the
-        registry from its surviving rows instead — reliable and cheap for the
-        modest number of boards.'''
-        existed = slug in self.registry
+        '''Remove a board: drop its registry row, live state, and files.'''
+        with self._lock:
+            existed = slug in self.registry
+            if existed:
+                del self.registry[slug]
+            st = self._states.pop(slug, None)
         # Stop the per-board index's append thread before removing its file,
         # or it errors flushing to a path that no longer exists.
-        st = self._states.pop(slug, None)
         if st is not None:
             try:
                 st.index.close()
@@ -324,13 +324,6 @@ class Boards:
         board_dir = os.path.join(self.boards_dir, slug)
         if os.path.isdir(board_dir):
             shutil.rmtree(board_dir, ignore_errors=True)
-        if existed:
-            with self._lock:
-                survivors = {k: list(self.registry[k][1:])
-                             for k in list(self.registry) if k != slug}
-                self.registry.clear()        # truncates the file
-                for k, trailing in survivors.items():
-                    self.registry[k] = trailing
         return existed
 
     # --- sessions / tokens -------------------------------------------------

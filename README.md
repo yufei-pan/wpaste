@@ -33,14 +33,17 @@ Defaults work out of the box. To override them, copy
 ```
 
 Configurable keys: `BASE_DIR`, `INDEX_FILE`, `INDEX_REWRITE_INTERVAL`,
-`RETENTION_SIZE`, `RETENTION_TIME`, `MAX_CONTENT_LENGTH`, `HOST`, `PORT`,
+`RETENTION_SIZE`, `RETENTION_TIME`, `DELETED_RETENTION_TIME`,
+`MAX_CONTENT_LENGTH`, `HOST`, `PORT`,
 `DEBUG`, plus the private-board keys `BOARDS_DIR`, `REGISTRY_FILE`,
 `SECRET_KEY`, `MAX_SESSIONS`, `PREFER_SECURE_COOKIES`, `TOTP_MAX_FAILURES`,
 `TOTP_BOARD_MAX_FAILURES`, `TOTP_LOCKOUT_TIME`, `ACCESS_RATE_LIMIT`,
 `ACCESS_RATE_WINDOW`, `TRUSTED_PROXY_HOPS`. Sizes accept bytes or strings like
 `"16GB"`/`"100MB"`; durations accept seconds or strings like `"4h"`/`"30m"`. The
-default upload limit (`MAX_CONTENT_LENGTH`) is 16GB. Set `RETENTION_TIME` to `0`
-to disable auto-deletion of messages.
+default upload limit (`MAX_CONTENT_LENGTH`) is 16GB; a single text message can
+be up to 64MB. Set `RETENTION_TIME` to `0` to disable auto-deletion of
+messages. Retention is enforced by a background sweep every minute, so it also
+applies to boards nobody opens.
 
 > **Behind a reverse proxy?** Set `TRUSTED_PROXY_HOPS` to the number of proxies
 > in front of wpaste (e.g. `1` for a single nginx). Otherwise every visitor
@@ -99,13 +102,17 @@ operator can take over any board (they can already read every file on disk).
 
 ### A note on deletion / disk usage
 
-Deleting a message **renames** its file to `<name>.deleted` rather than
-removing it (a soft delete), so it can be recovered. Files larger than
-`RETENTION_SIZE` are hard-deleted instead. This is intended behavior — but
-`.deleted` files are **never cleaned up automatically** and will accumulate on
-disk. If you do *not* want files retained on delete, set `RETENTION_SIZE` very
-small (e.g. `"1"`) so everything is hard-deleted; otherwise prune `.deleted`
-files yourself periodically.
+Deleting a message (by hand or by retention) **renames** its file to
+`<name>.deleted` rather than removing it (a soft delete), so it can be recovered
+from the server for a while. The background sweep removes `.deleted` files
+`DELETED_RETENTION_TIME` after their deletion (default `7d`; `0` keeps them
+forever). Files larger than `RETENTION_SIZE` are hard-deleted straight away. If
+you do *not* want files retained on delete at all, set `RETENTION_SIZE` very
+small (e.g. `"1"`) so everything is hard-deleted.
+
+Uploaded files are served with `Content-Security-Policy: sandbox` (PDFs
+excepted), so an uploaded HTML or SVG page can be viewed but never runs script
+as wpaste.
 
 ![screenshot1](/etc/Screenshot 2024-05-01 145831.png)
 

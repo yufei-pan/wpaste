@@ -202,7 +202,7 @@ document.getElementById('messageForm').addEventListener('submit', async function
 			document.getElementById('progressBar').style.width = '0%';
 			openLoginModal(BOARD, BOARD_DISPLAY);
 		} else {
-			uploadProgress.textContent = 'Upload failed';
+			uploadProgress.textContent = xhr.status === 413 ? 'Too large' : 'Upload failed';
 			uploadProgress.className = 'upload-failed';
 			document.getElementById('progressBar').style.width = '0%';
 		}
@@ -225,54 +225,77 @@ document.getElementById('clearButton').addEventListener('click', function() {
 
 // ===========================================================================
 // Rendering helpers (HTML / Markdown / plain)
+//
+// Text renders only on clear signs: code and configs share '<', '#' and '-'
+// with HTML and Markdown, and must stay plain. Copy always returns the
+// original text, whatever is shown.
 // ===========================================================================
 function isHTML(str) {
-	const doc = new DOMParser().parseFromString(str, "text/html");
-	if (doc.querySelector('parsererror')) {
+	const s = str.trim();
+	if (!s.startsWith('<')) {
 		return false;
 	}
-	const hasElementNodes = (node) => node.nodeType === 1 && node.tagName.toLowerCase() !== 'html';
-	const bodyHasNodes = Array.from(doc.body.childNodes).some(hasElementNodes);
-	const headHasNodes = Array.from(doc.head.childNodes).some(hasElementNodes);
-	return bodyHasNodes || headHasNodes;
+	const doc = new DOMParser().parseFromString(s, 'text/html');
+	const elements = [...doc.head.querySelectorAll('*'), ...doc.body.querySelectorAll('*')];
+	// `<int>` in `vector<int>` parses as a made-up tag; real HTML uses known ones.
+	return elements.length > 0 && !elements.some((el) => el instanceof HTMLUnknownElement);
+}
+
+// Signs that rarely appear outside Markdown.
+const MARKDOWN_STRONG = [
+	/```[\s\S]*?```/,                                       // fenced code block
+	/\[[^\]\n]+\]\((https?:\/\/|\/|#|\.\.?\/)[^)\s]*\)/,    // [link](url)
+	/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/m,   // table separator row
+	/(^|[\s(])\*\*\S(?:[^*\n]*\S)?\*\*/m,                   // **bold**
+];
+// Signs that code and configs share ('# comment', '- item'): two are needed,
+// and none of the code hints below.
+const MARKDOWN_WEAK = [
+	/^#{1,6}\s+\S/m,
+	/^\s*[-*+]\s+\S/m,
+	/^\s*\d+\.\s+\S/m,
+	/^\s*>\s+\S/m,
+	/`[^`\n]+`/,
+	/^\S.*\n(={3,}|-{3,})\s*$/m,
+];
+
+function looksLikeCode(str) {
+	return /^#!/.test(str)                                       // shebang
+		|| /[;{}]\s*$/m.test(str)                                // statement / block ends
+		|| (str.match(/^\s*[\w.-]+:(\s|$)/gm) || []).length >= 2; // YAML-style keys
 }
 
 function looksLikeMarkdown(str) {
 	if (!str || !str.trim()) {
 		return false;
 	}
-	const patterns = [
-		/^#{1,6}\s+\S/m,
-		/^\s*[-*+]\s+\S/m,
-		/^\s*\d+\.\s+\S/m,
-		/^\s*>\s+\S/m,
-		/```[\s\S]*?```/,
-		/`[^`\n]+`/,
-		/\*\*[^*\n]+\*\*/,
-		/__[^_\n]+__/,
-		/\[[^\]]+\]\([^)\s]+\)/,
-		/^\s*\|.+\|\s*$/m,
-		/^(\s*)(-{3,}|\*{3,}|_{3,})\s*$/m,
-		/^\S.*\n(={3,}|-{3,})\s*$/m,
-	];
-	return patterns.some((re) => re.test(str));
+	if (MARKDOWN_STRONG.some((re) => re.test(str))) {
+		return true;
+	}
+	return MARKDOWN_WEAK.filter((re) => re.test(str)).length >= 2 && !looksLikeCode(str);
+}
+
+// <style> would restyle the whole page (a pasted HTML document could blank it).
+function sanitize(html) {
+	return DOMPurify.sanitize(html, { FORBID_TAGS: ['style'] });
+}
+
+function renderHTML(content, mode) {
+	return sanitize(mode === 'markdown' ? marked.parse(content, { breaks: true }) : content);
 }
 
 function buildTextElement(content, mode) {
-	if (mode === 'html') {
-		const div = document.createElement('div');
-		div.innerHTML = DOMPurify.sanitize(content);
-		return div;
+	if (mode === 'plain') {
+		const pre = document.createElement('pre');
+		pre.textContent = content;
+		return pre;
 	}
+	const div = document.createElement('div');
 	if (mode === 'markdown') {
-		const div = document.createElement('div');
 		div.classList.add('markdown-body');
-		div.innerHTML = DOMPurify.sanitize(marked.parse(content));
-		return div;
 	}
-	const pre = document.createElement('pre');
-	pre.textContent = content;
-	return pre;
+	div.innerHTML = renderHTML(content, mode);
+	return div;
 }
 
 function detectTextMode(content) {
@@ -319,145 +342,228 @@ async function fetchMessages() {
         BOARD_RETENTION = result.retention || '';
     }
     applyPermUI();
-
-    const messagesDiv = document.getElementById('messages');
-    messagesDiv.innerHTML = '';
-
-    result.messages.forEach((message) => {
-        const messageElement = document.createElement('div');
-        messageElement.classList.add('message');
-        messageElement.id = `message-${message.id}`;
-
-        let contentToCopy = null;
-        const contentRef = { el: null };
-
-        const contentContainer = document.createElement('div');
-        contentContainer.classList.add('content-container');
-
-        const textMode = message.type === 'text' ? detectTextMode(message.content) : 'plain';
-
-        if (message.type === 'text') {
-            contentRef.el = buildTextElement(message.content, textMode);
-            contentContainer.appendChild(contentRef.el);
-            contentToCopy = contentRef.el;
-
-        } else if (message.type === 'image') {
-            if (message.filename && message.filename !== 'image.png') {
-                const imgName = document.createElement('p');
-                imgName.textContent = message.filename;
-                contentContainer.appendChild(imgName);
-            }
-            const img = document.createElement('img');
-            img.src = message.content;
-            img.style.maxWidth = '100%';
-            contentContainer.appendChild(img);
-            contentRef.el = img;
-            contentToCopy = img;
-
-        } else if (message.type === 'video') {
-            if (message.filename) {
-                const videoName = document.createElement('p');
-                videoName.textContent = message.filename;
-                contentContainer.appendChild(videoName);
-            }
-            const video = document.createElement('video');
-            video.src = message.content;
-            video.controls = true;
-            video.style.maxWidth = '100%';
-            contentContainer.appendChild(video);
-            contentRef.el = video;
-            contentToCopy = video;
-
-        } else if (message.type === 'file') {
-            const a = document.createElement('a');
-            a.href = message.content;
-            a.textContent = message.filename || 'Download File';
-            a.download = '';
-            contentContainer.appendChild(a);
-            contentRef.el = a;
-            contentToCopy = a;
-
-        } else {
-            console.error('Unknown message type:', message.type);
-            const pre = document.createElement('pre');
-            pre.textContent = 'Unknown message type';
-            contentContainer.appendChild(pre);
-            contentRef.el = pre;
-            contentToCopy = pre;
-        }
-
-        messageElement.appendChild(contentContainer);
-
-        const meta = document.createElement('div');
-        meta.classList.add('message-meta');
-        const typeTag = document.createElement('span');
-        typeTag.classList.add('msg-type');
-        typeTag.textContent = message.type;
-        const timeTag = document.createElement('span');
-        timeTag.classList.add('msg-time');
-        const date = new Date(message.timestamp * 1000);
-        timeTag.textContent = date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
-        meta.appendChild(typeTag);
-        meta.appendChild(timeTag);
-        messageElement.insertBefore(meta, messageElement.firstChild);
-
-        const buttonsContainer = document.createElement('div');
-        buttonsContainer.classList.add('buttons-container');
-
-        const copyButton = document.createElement('button');
-        copyButton.textContent = 'Copy';
-        copyButton.classList.add('copy-button');
-        copyButton.onclick = function() { copyToClipboard(contentToCopy); };
-        buttonsContainer.appendChild(copyButton);
-
-        const copyLinkButton = document.createElement('button');
-        copyLinkButton.textContent = 'Copy Links';
-        copyLinkButton.classList.add('copy-link-button');
-        copyLinkButton.onclick = function() {
-            const url = messageRawUrl(message);
-            if (!url) { showToast('No link available'); return; }
-            copyLinkToClipboard(url, contentContainer, contentRef);
-        };
-        buttonsContainer.appendChild(copyLinkButton);
-
-        // Only offer delete where the viewer is actually allowed to delete.
-        if (canDelete()) {
-            const deleteButton = document.createElement('button');
-            deleteButton.textContent = 'Delete';
-            deleteButton.classList.add('delete-button');
-            deleteButton.onclick = function() { deleteMessage(message.id); };
-            buttonsContainer.appendChild(deleteButton);
-        }
-
-        if (textMode !== 'plain') {
-            const showRawButton = document.createElement('button');
-            showRawButton.textContent = 'Show Raw';
-            showRawButton.classList.add('show-raw-button');
-            messageElement.setAttribute('data-show-raw', 'false');
-
-            showRawButton.onclick = function() {
-                const isCurrentlyRaw = (messageElement.getAttribute('data-show-raw') === 'true');
-                const newMode = isCurrentlyRaw ? textMode : 'plain';
-                const newElement = buildTextElement(message.content, newMode);
-                contentContainer.replaceChild(newElement, contentRef.el);
-                contentRef.el = newElement;
-                contentToCopy = newElement;
-                messageElement.setAttribute('data-show-raw', isCurrentlyRaw ? 'false' : 'true');
-                showRawButton.textContent = isCurrentlyRaw ? 'Show Raw' : 'Show Rendered';
-            };
-
-            buttonsContainer.appendChild(showRawButton);
-        }
-
-        messageElement.appendChild(buttonsContainer);
-        messagesDiv.appendChild(messageElement);
-    });
+    renderMessages(result.messages);
     return true;
+}
+
+// Rendered messages by id: an update only adds and removes what changed, so a
+// playing video or a Show Raw toggle survives someone else posting.
+const renderedMessages = new Map();
+let renderedWithDelete = null;
+
+function clearMessages() {
+	renderedMessages.clear();
+	document.getElementById('messages').innerHTML = '';
+}
+
+function renderMessages(list) {
+	if (renderedWithDelete !== canDelete()) {   // Delete buttons follow permissions
+		clearMessages();
+		renderedWithDelete = canDelete();
+	}
+	const messagesDiv = document.getElementById('messages');
+	const live = new Set(list.map((m) => m.id));
+	for (const [id, entry] of renderedMessages) {
+		if (!live.has(id)) {
+			entry.el.remove();
+			renderedMessages.delete(id);
+		}
+	}
+	let next = messagesDiv.firstChild;
+	for (const message of list) {
+		let entry = renderedMessages.get(message.id);
+		if (!entry) {
+			entry = buildMessage(message);
+			renderedMessages.set(message.id, entry);
+		}
+		if (entry.el === next) {
+			next = next.nextSibling;
+		} else {
+			messagesDiv.insertBefore(entry.el, next);
+		}
+	}
+}
+
+// One message card. `view` is what the content area shows right now (Show Raw
+// swaps it); Copy works from the message itself, never from the rendering.
+function buildMessage(message) {
+	const messageElement = document.createElement('div');
+	messageElement.classList.add('message');
+	messageElement.id = `message-${message.id}`;
+	messageElement.dataset.id = message.id;
+
+	const contentContainer = document.createElement('div');
+	contentContainer.classList.add('content-container');
+
+	const textMode = message.type === 'text' ? detectTextMode(message.content) : 'plain';
+	const view = { el: null, mode: textMode };
+
+	if (message.type === 'text') {
+		view.el = buildTextElement(message.content, textMode);
+
+	} else if (message.type === 'image') {
+		if (message.filename && message.filename !== 'image.png') {
+			const imgName = document.createElement('p');
+			imgName.textContent = message.filename;
+			contentContainer.appendChild(imgName);
+		}
+		const img = document.createElement('img');
+		img.src = message.content;
+		img.style.maxWidth = '100%';
+		view.el = img;
+
+	} else if (message.type === 'video') {
+		if (message.filename) {
+			const videoName = document.createElement('p');
+			videoName.textContent = message.filename;
+			contentContainer.appendChild(videoName);
+		}
+		const video = document.createElement('video');
+		video.src = message.content;
+		video.controls = true;
+		video.style.maxWidth = '100%';
+		view.el = video;
+
+	} else if (message.type === 'file') {
+		const a = document.createElement('a');
+		a.href = message.content;
+		a.textContent = message.filename || 'Download File';
+		a.download = '';
+		view.el = a;
+
+	} else {
+		console.error('Unknown message type:', message.type);
+		const pre = document.createElement('pre');
+		pre.textContent = 'Unknown message type';
+		view.el = pre;
+	}
+	contentContainer.appendChild(view.el);
+	messageElement.appendChild(contentContainer);
+
+	const meta = document.createElement('div');
+	meta.classList.add('message-meta');
+	const typeTag = document.createElement('span');
+	typeTag.classList.add('msg-type');
+	typeTag.textContent = message.type;
+	const timeTag = document.createElement('span');
+	timeTag.classList.add('msg-time');
+	const date = new Date(message.timestamp * 1000);
+	timeTag.textContent = date.toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+	meta.appendChild(typeTag);
+	meta.appendChild(timeTag);
+	messageElement.insertBefore(meta, messageElement.firstChild);
+
+	const buttonsContainer = document.createElement('div');
+	buttonsContainer.classList.add('buttons-container');
+
+	const copyButton = document.createElement('button');
+	copyButton.textContent = 'Copy';
+	copyButton.classList.add('copy-button');
+	copyButton.onclick = function() { copyMessage(message, view); };
+	buttonsContainer.appendChild(copyButton);
+
+	const copyLinkButton = document.createElement('button');
+	copyLinkButton.textContent = 'Copy Links';
+	copyLinkButton.classList.add('copy-link-button');
+	copyLinkButton.onclick = function() {
+		const url = messageRawUrl(message);
+		if (!url) { showToast('No link available'); return; }
+		copyLinkToClipboard(url, contentContainer, view);
+	};
+	buttonsContainer.appendChild(copyLinkButton);
+
+	// Only offer delete where the viewer is actually allowed to delete.
+	if (canDelete()) {
+		const deleteButton = document.createElement('button');
+		deleteButton.textContent = 'Delete';
+		deleteButton.classList.add('delete-button');
+		deleteButton.onclick = function() { deleteMessage(message.id); };
+		buttonsContainer.appendChild(deleteButton);
+	}
+
+	if (textMode !== 'plain') {
+		const showRawButton = document.createElement('button');
+		showRawButton.textContent = 'Show Raw';
+		showRawButton.classList.add('show-raw-button');
+		messageElement.setAttribute('data-show-raw', 'false');
+
+		showRawButton.onclick = function() {
+			const isCurrentlyRaw = view.mode === 'plain';
+			const newMode = isCurrentlyRaw ? textMode : 'plain';
+			const newElement = buildTextElement(message.content, newMode);
+			contentContainer.replaceChild(newElement, view.el);
+			view.el = newElement;
+			view.mode = newMode;
+			messageElement.setAttribute('data-show-raw', isCurrentlyRaw ? 'false' : 'true');
+			showRawButton.textContent = isCurrentlyRaw ? 'Show Raw' : 'Show Rendered';
+		};
+
+		buttonsContainer.appendChild(showRawButton);
+	}
+
+	messageElement.appendChild(buttonsContainer);
+	return { el: messageElement, message: message, view: view };
 }
 
 // ===========================================================================
 // Clipboard
+//
+// Text goes through execCommand('copy') with our own copy-event data: unlike
+// navigator.clipboard it also works over plain HTTP (a LAN address), and it
+// sets plain text and HTML in one go. Only images need navigator.clipboard.
 // ===========================================================================
+let pendingCopy = null;      // formats for the copy event copyFormats() fires
+
+function copyFormats(formats) {
+	const previous = document.activeElement;
+	// Safari only fires the copy event when something is selected.
+	const ta = document.createElement('textarea');
+	ta.value = formats['text/plain'] || '';
+	ta.setAttribute('readonly', '');
+	ta.style.position = 'fixed';
+	ta.style.opacity = '0';
+	document.body.appendChild(ta);
+	ta.select();
+	pendingCopy = formats;
+	let ok = false;
+	try {
+		ok = document.execCommand('copy');
+	} catch (e) {
+		ok = false;
+	}
+	pendingCopy = null;
+	ta.remove();
+	if (previous && previous.focus) previous.focus();
+	return ok;
+}
+
+// What Copy puts on the clipboard: a text message's original text (plus its
+// rendering as HTML while rendered), or a link to anything else.
+function messageFormats(message, view) {
+	if (message.type === 'text') {
+		const formats = { 'text/plain': message.content };
+		if (view.mode !== 'plain') formats['text/html'] = renderHTML(message.content, view.mode);
+		return formats;
+	}
+	return { 'text/plain': messageRawUrl(message) || '' };
+}
+
+function copiedLabel(message) {
+	return message.type === 'text' ? 'Text copied to clipboard!' : 'Link copied to clipboard!';
+}
+
+function canWriteImages() {
+	return typeof ClipboardItem !== 'undefined' && !!navigator.clipboard;
+}
+
+function copyMessage(message, view) {
+	if (message.type === 'image' && canWriteImages()) {
+		copyImage(view.el);
+		return;
+	}
+	showToast(copyFormats(messageFormats(message, view)) ? copiedLabel(message) : 'Copy failed');
+}
+
 function absoluteUrl(pathOrUrl) {
 	if (/^https?:\/\//i.test(pathOrUrl)) return pathOrUrl;
 	return window.location.origin + (pathOrUrl.startsWith('/') ? pathOrUrl : '/' + pathOrUrl);
@@ -473,135 +579,97 @@ function messageRawUrl(message) {
 	return null;
 }
 
-function clipboardWriteTextSupported() {
-	return !!(navigator.clipboard && typeof navigator.clipboard.writeText === 'function');
-}
-
-function showRawLinkFallback(url, contentContainer, contentRef) {
+function showRawLinkFallback(url, contentContainer, view) {
 	showToast('Clipboard unavailable — copy the link below');
 	const pre = document.createElement('pre');
 	pre.classList.add('raw-link');
 	pre.textContent = url;
-	if (contentRef.el && contentRef.el.parentNode === contentContainer) {
-		contentContainer.replaceChild(pre, contentRef.el);
+	if (view.el && view.el.parentNode === contentContainer) {
+		contentContainer.replaceChild(pre, view.el);
 	} else {
 		contentContainer.prepend(pre);
 	}
-	contentRef.el = pre;
+	view.el = pre;
 }
 
-function copyLinkToClipboard(url, contentContainer, contentRef) {
-	if (!clipboardWriteTextSupported()) {
-		showRawLinkFallback(url, contentContainer, contentRef);
-		return;
-	}
-	navigator.clipboard.writeText(url).then(() => {
+function copyLinkToClipboard(url, contentContainer, view) {
+	if (copyFormats({ 'text/plain': url })) {
 		showToast('Link copied to clipboard!');
-	}, () => {
-		showRawLinkFallback(url, contentContainer, contentRef);
-	});
+	} else {
+		showRawLinkFallback(url, contentContainer, view);
+	}
 }
 
-function copyToClipboard(element) {
-	if (!element) {
-		showToast('No content to copy!');
-		return;
-	}
-	if (element.tagName === 'IMG') {
-		if (typeof ClipboardItem !== "undefined") {
-			fetch(element.src)
-				.then(res => res.blob())
-				.then(blob => {
-					if (blob.type === "image/png") {
-						const item = new ClipboardItem({ "image/png": blob });
+function copyImage(img) {
+	fetch(img.src)
+		.then(res => res.blob())
+		.then(blob => {
+			if (blob.type === "image/png") {
+				const item = new ClipboardItem({ "image/png": blob });
+				navigator.clipboard.write([item]).then(() => {
+					showToast('Image copied to clipboard!');
+				}, (err) => {
+					showToast('Failed to copy image: ' + err);
+				});
+			} else {
+				const canvas = document.createElement('canvas');
+				const ctx = canvas.getContext('2d');
+				const image = new Image();
+				image.onload = () => {
+					canvas.width = image.width;
+					canvas.height = image.height;
+					ctx.drawImage(image, 0, 0);
+					canvas.toBlob((pngBlob) => {
+						const item = new ClipboardItem({ "image/png": pngBlob });
 						navigator.clipboard.write([item]).then(() => {
-							showToast('Image copied to clipboard!');
+							showToast('Converted Image copied to clipboard!');
 						}, (err) => {
 							showToast('Failed to copy image: ' + err);
 						});
-					} else {
-						const canvas = document.createElement('canvas');
-						const ctx = canvas.getContext('2d');
-						const img = new Image();
-						img.onload = () => {
-							canvas.width = img.width;
-							canvas.height = img.height;
-							ctx.drawImage(img, 0, 0);
-							canvas.toBlob((pngBlob) => {
-								const item = new ClipboardItem({ "image/png": pngBlob });
-								navigator.clipboard.write([item]).then(() => {
-									showToast('Converted Image copied to clipboard!');
-								}, (err) => {
-									showToast('Failed to copy image: ' + err);
-								});
-							}, 'image/png');
-						};
-						img.src = URL.createObjectURL(blob);
-					}
-				});
-		} else {
-			navigator.clipboard.writeText(element.src).then(() => {
-				showToast('Image URL copied to clipboard!');
-			}, (err) => {
-				showToast('Failed to copy image URL: ' + err);
-			});
-		}
-	} else if (element.tagName === 'PRE' || element.tagName === 'P') {
-		navigator.clipboard.writeText(element.textContent).then(() => {
-			showToast('Text copied to clipboard!');
-		}, (err) => {
-			showToast('Failed to copy text: ' + err);
-		});
-	} else if (element.tagName === 'DIV') {
-		const selection = window.getSelection();
-		const range = document.createRange();
-		range.selectNodeContents(element);
-		selection.removeAllRanges();
-		selection.addRange(range);
-		document.execCommand('copy');
-		selection.removeAllRanges();
-		showToast('HTML copied to clipboard!');
-	} else if (element.tagName === 'A') {
-		navigator.clipboard.writeText(element.href).then(() => {
-			showToast('Link copied to clipboard!');
-		}, (err) => {
-			showToast('Failed to copy link: ' + err);
-		});
-	} else if (element.tagName === 'VIDEO') {
-		navigator.clipboard.writeText(element.src).then(() => {
-			showToast('Video URL copied to clipboard!');
-		}, (err) => {
-			showToast('Failed to copy video URL: ' + err);
-		});
-	} else {
-		showToast('Unsupported content!');
-	}
+					}, 'image/png');
+				};
+				image.src = URL.createObjectURL(blob);
+			}
+		})
+		.catch((err) => showToast('Failed to copy image: ' + err));
 }
 
 // True when focus is in any editable field (the compose box, the board name
 // box, a TOTP/code input, etc.) — those should keep native copy/paste.
 function inEditableField() {
-	const ae = document.activeElement;
-	return !!ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable);
+	return isEditable(document.activeElement);
+}
+
+function isEditable(el) {
+	return !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
 }
 
 document.addEventListener('copy', function(e) {
-	if (inEditableField()) {
+	if (pendingCopy) {                 // fired by copyFormats()
+		for (const [type, data] of Object.entries(pendingCopy)) {
+			e.clipboardData.setData(type, data);
+		}
+		e.preventDefault();
 		return;
 	}
-	const selection = window.getSelection();
-	if (!selection.toString().trim()) {
-		e.preventDefault();
-		const newestMessage = document.querySelector('.message');
-		if (newestMessage) {
-			const contentElement = newestMessage.querySelector('pre')
-				|| newestMessage.querySelector('img')
-				|| newestMessage.querySelector('div');
-			if (contentElement) {
-				copyToClipboard(contentElement);
-			}
-		}
+	if (inEditableField() || window.getSelection().toString().trim()) {
+		return;
 	}
+	// Nothing selected: copy the newest message, as its Copy button would.
+	const newest = document.querySelector('#messages > .message');
+	const entry = newest && renderedMessages.get(newest.dataset.id);
+	if (!entry) {
+		return;
+	}
+	e.preventDefault();
+	if (entry.message.type === 'image' && canWriteImages()) {
+		copyImage(entry.view.el);
+		return;
+	}
+	for (const [type, data] of Object.entries(messageFormats(entry.message, entry.view))) {
+		e.clipboardData.setData(type, data);
+	}
+	showToast(copiedLabel(entry.message));
 });
 
 function showToast(message) {
@@ -622,36 +690,47 @@ function postFormData(formData) {
 		.then(response => {
 			if (response.status === 401) {
 				openLoginModal(BOARD, BOARD_DISPLAY);
-				return null;
+				return;
 			}
-			return response.json();
+			if (!response.ok) {
+				showToast(response.status === 413 ? 'Too large to upload' : 'Upload failed');
+				return;
+			}
+			checkForUpdates();
 		})
-		.then(result => { if (result) checkForUpdates(); })
-		.catch(error => console.error('Error:', error));
+		.catch(error => { console.error('Error:', error); showToast('Upload failed'); });
 }
 
-document.body.addEventListener('paste', async function(e) {
+function uploadField(file) {
+	if (file.type.startsWith('image/')) return 'image';
+	if (file.type.startsWith('video/')) return 'video';
+	return 'file';
+}
+
+// One paste or drop makes one message: the files if there are any, otherwise
+// the plain text (a rich copy also carries an HTML twin of the same text).
+function postTransfer(transfer) {
+	const formData = new FormData();
+	const files = Array.from(transfer.files || []);
+	if (files.length) {
+		for (const file of files) {
+			formData.append(uploadField(file), file);
+		}
+	} else {
+		const text = transfer.getData('text/plain') || transfer.getData('text/html');
+		if (!text.trim()) return;
+		formData.append('message', text);
+	}
+	postFormData(formData);
+}
+
+document.body.addEventListener('paste', function(e) {
 	if (inEditableField()) {
 		return;   // let the focused field (compose, board name, TOTP code…) paste normally
 	}
 	if (!canPost()) return;
 	e.preventDefault();
-	const items = e.clipboardData.items;
-	for (const item of items) {
-		if (item.kind === 'string') {
-			item.getAsString((text) => {
-				const formData = new FormData();
-				formData.append('message', text);
-				postFormData(formData);
-			});
-		} else if (item.kind === 'file' && item.type.startsWith('image/')) {
-			const file = item.getAsFile();
-			const formData = new FormData();
-			formData.append('image', file);
-			formData.append('message', '');
-			postFormData(formData);
-		}
-	}
+	postTransfer(e.clipboardData);
 });
 
 document.body.addEventListener('dragover', function(e) {
@@ -673,19 +752,14 @@ document.body.addEventListener('dragleave', function(e) {
 });
 
 document.body.addEventListener('drop', function(e) {
+	e.target.style.background = '';
+	if (isEditable(e.target) && !e.dataTransfer.files.length) {
+		return;   // text dropped into a field (the compose box…) lands in the field
+	}
 	e.preventDefault();
 	e.stopPropagation();
-	e.target.style.background = '';
 	if (!canPost()) { showToast('This board is read-only.'); return; }
-	const files = e.dataTransfer.files;
-	const formData = new FormData();
-	for (const file of files) {
-		if (file.type.startsWith('image/')) {
-			formData.append('image', file);
-		}
-	}
-	formData.append('message', '');
-	postFormData(formData);
+	postTransfer(e.dataTransfer);
 });
 
 async function deleteMessage(messageIndex) {
@@ -695,6 +769,7 @@ async function deleteMessage(messageIndex) {
 }
 
 async function deleteAllMessages() {
+	if (!confirm('Delete all messages on this board?')) return;
 	const r = await fetch(api('/delete_all'), { method: 'POST' });
 	if (r.status === 401) { openLoginModal(BOARD, BOARD_DISPLAY); return; }
 	checkForUpdates();
@@ -800,7 +875,7 @@ function openSetupModal(slug, display, secret, otpauth) {
 	openModal(node);
 	renderQR(document.getElementById('qrBox'), otpauth);
 	document.getElementById('copySecret').onclick = function() {
-		navigator.clipboard.writeText(secret).then(() => showToast('Secret copied'));
+		showToast(copyFormats({ 'text/plain': secret }) ? 'Secret copied' : 'Copy failed — select the secret and copy it');
 	};
 	document.getElementById('codeForm').onsubmit = async function(e) {
 		e.preventDefault();
@@ -901,8 +976,7 @@ async function doLogout() {
 function renderLocked() {
 	applyPermUI();
 	const panel = document.getElementById('lockedPanel');
-	const messages = document.getElementById('messages');
-	if (messages) messages.innerHTML = '';
+	clearMessages();
 	panel.hidden = false;
 	panel.innerHTML = `
 		<div class="locked-inner">
