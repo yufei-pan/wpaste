@@ -6,6 +6,7 @@ from datetime import datetime
 import time
 import os
 import sys
+import math
 import random
 import json
 import secrets
@@ -19,10 +20,13 @@ from boards import (Boards, BoardState, RateLimiter, canonical_slug, can,
                     new_secret, verify_code, provisioning_uri,
                     PERMS, DEFAULT_PERM, PUBLIC_PERM)
 
-version = '1.6.0'
+version = '1.7.0'
 
-#TODO: add feature: copy from the webpage should be easier : ctrl c copy the last message , add a copy to clipboard button to messages
-#TODO: add periodic update / event based update to the webpage
+# The admin CLI must act on the server's data. The server runs from the app's
+# folder (`gunicorn app:app`, the systemd WorkingDirectory), where the config
+# file and relative data paths resolve, so run the CLI from there too.
+if __name__ == '__main__' and sys.argv[1:2] == ['admin']:
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
 
 # print with flush on
 from functools import partial
@@ -72,25 +76,32 @@ _SIZE_UNITS = {'B': 1, 'K': 1024, 'KB': 1024, 'M': 1024**2, 'MB': 1024**2,
                'G': 1024**3, 'GB': 1024**3, 'T': 1024**4, 'TB': 1024**4}
 _TIME_UNITS = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400}
 
+def _amount(number, value):
+    '''Sizes and durations are finite and >= 0: a negative retention would
+    purge every message at once (0, not -1, means "never").'''
+    if not math.isfinite(number) or number < 0:
+        raise ValueError(f"expected 0 or more, got {value!r}")
+    return int(number)
+
 def parse_size(value):
     '''Accept an int/float of bytes or a string like "16GB"/"100MB"/"512K".'''
     if isinstance(value, (int, float)):
-        return int(value)
+        return _amount(value, value)
     s = str(value).strip().upper()
     for unit in sorted(_SIZE_UNITS, key=len, reverse=True):
         if s.endswith(unit):
-            return int(float(s[:-len(unit)].strip()) * _SIZE_UNITS[unit])
-    return int(float(s))
+            return _amount(float(s[:-len(unit)].strip()) * _SIZE_UNITS[unit], value)
+    return _amount(float(s), value)
 
 def parse_duration(value):
     '''Accept an int/float of seconds or a string like "4h"/"30m"/"7d".'''
     if isinstance(value, (int, float)):
-        return int(value)
+        return _amount(value, value)
     s = str(value).strip().lower()
     for unit, mult in _TIME_UNITS.items():
         if s.endswith(unit):
-            return int(float(s[:-1].strip()) * mult)
-    return int(float(s))
+            return _amount(float(s[:-1].strip()) * mult, value)
+    return _amount(float(s), value)
 
 def load_config():
     config = dict(DEFAULT_CONFIG)
@@ -381,9 +392,10 @@ def _stale(row, retention, now):
     (0 = never), or blank — a tombstone written by TSVZ < 3.39 reloads as an
     empty row, and purging it writes a proper one.'''
     try:
-        return bool(retention) and now - float(row[1]) > retention
+        unix_time = float(row[1])
     except (ValueError, TypeError, IndexError):
         return True
+    return bool(retention) and now - unix_time > retention
 
 def live_rows(state):
     '''Return a board's live messages as [(unix_time, id, row)], newest first,
@@ -617,10 +629,14 @@ def get_file(slug, message_id):
     if _stale(row, board_retention(state.slug), time.time()):
         _purge(state, message_id)
         abort(404, description="Message not found.")
-    file_path, download_name = row[2], row[4]
-    # Confine to this board's directory before serving.
-    base = os.path.normpath(state.base_dir)
-    if os.path.commonpath([base, os.path.normpath(file_path)]) != base:
+    download_name = row[4]
+    # Confine to this board's directory before serving. Both sides are made
+    # absolute: commonpath() refuses to compare absolute with relative, and
+    # send_file() would resolve a relative path against the code folder rather
+    # than the working directory the data lives in.
+    base = os.path.realpath(state.base_dir)
+    file_path = os.path.realpath(row[2])
+    if os.path.commonpath([base, file_path]) != base:
         abort(404, description="Path not valid.")
     if not os.path.exists(file_path):
         abort(404, description="File not found.")
@@ -760,7 +776,7 @@ def board_settings(slug):
             try:
                 parse_duration(rv)
             except (ValueError, TypeError):
-                return jsonify({"success": False, "message": "Invalid retention."}), 400
+                return jsonify({"success": False, "message": "Invalid retention — use e.g. 4h or 7d, or 0 for never."}), 400
         boards.set_retention(cslug, rv)
     state.bump()
     m = boards.meta(cslug)

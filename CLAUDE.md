@@ -16,9 +16,15 @@ flask run            # or: python app.py  (runs app.run(debug=True))
 # Production
 pip install gunicorn
 gunicorn app:app
+
+# Tests
+pip install -r requirements-dev.txt
+pytest
 ```
 
-There are no automated tests in-repo. `TSVZ` (>= 3.39) and `pyotp` are pip dependencies; the local `TSVZ.py`, `mainIndex.tsv`, `messages/`, `boards/`, `boards.nsv`, and `.wpaste_secret` are gitignored. (`itsdangerous` ships with Flask.) Frontend libraries (DOMPurify, marked, qrcode-generator) are vendored in `static/js/vendor/` and served locally — there is no CDN.
+Tests live in `tests/` and use Flask's test client. `tests/conftest.py` imports `app` from a throwaway working directory with its own `wpaste.config.json` (app.py opens its data files at import, relative to the cwd), holds `_sweeper_started` so no background sweep runs (tests call `sweep()` directly), and resets the default board, rate limiter and retention globals per test. `new_board(client, perm)` creates a board and leaves `client` logged in. Browser behaviour (scripts.js) has no automated tests.
+
+`TSVZ` (>= 3.39) and `pyotp` are pip dependencies; the local `TSVZ.py`, `mainIndex.tsv`, `messages/`, `boards/`, `boards.nsv`, and `.wpaste_secret` are gitignored. (`itsdangerous` ships with Flask.) Frontend libraries (DOMPurify, marked, qrcode-generator) are vendored in `static/js/vendor/` and served locally — there is no CDN.
 
 ## Architecture
 
@@ -35,7 +41,7 @@ Backend is `app.py` (routing, default board, config, admin CLI) + `boards.py` (p
 Every message route exists twice via Flask `defaults=`: a bare path for the default board (`slug=None`) and a `/b/<slug>/...` path for named boards. `resolve(slug, action)` is the choke point: it canonicalizes the slug, 404s unknown boards, computes `authed` (`board_authed`), enforces the `can(perm, action, authed)` matrix, and returns `(BoardState, perm, authed)` — aborting `401 {auth_required:true}` when a code is needed. Handlers operate on the returned `state.index` / `state.base_dir` and call `state.bump()`.
 - `POST /message` (or `/b/<slug>/message`) — `message` text + multipart `image`/`video`/`file` (each `getlist`-ed). Images sniffed via `filetype.guess`; one the sniffer can't confirm (e.g. SVG) is stored as a `file` rather than refused. Requires `post` permission. Flask's per-field form cap is raised to 64 MB (`MAX_FORM_MEMORY_SIZE`) so large pasted text fits.
 - `GET /messages` — live messages newest-first (text inlined; media → URL, prefixed `/b/<slug>` for named boards). Also returns `board, perm, authed, display, retention`. Requires `read`. Listing goes through `live_rows(state)`, which also purges stale rows (older than the board's resolved retention — `0` = never — or blank) and rows whose file is gone; the curl view and the sweep use the same function.
-- `GET /image|/video|/file|/text/<id>` (and `/b/<slug>/...`) — one `get_file` handler; **read-permission gated**, path confined to `state.base_dir`, and an expired message 404s (and is purged). Every file is sent with `X-Content-Type-Options: nosniff` and, except PDFs, `Content-Security-Policy: sandbox`, so an uploaded HTML/SVG page opened directly can't run script as wpaste. `app.url_map.redirect_defaults = False` stops Werkzeug 308-redirecting the default-board rules to one another.
+- `GET /image|/video|/file|/text/<id>` (and `/b/<slug>/...`) — one `get_file` handler; **read-permission gated**, path confined to `state.base_dir` (both `realpath`ed — `send_file` would otherwise resolve a relative path against the code folder, not the cwd the data lives in), and an expired message 404s (and is purged). Every file is sent with `X-Content-Type-Options: nosniff` and, except PDFs, `Content-Security-Policy: sandbox`, so an uploaded HTML/SVG page opened directly can't run script as wpaste. `app.url_map.redirect_defaults = False` stops Werkzeug 308-redirecting the default-board rules to one another.
 - `POST /delete/<id>`, `POST /delete_all` — require `delete`.
 - **Board lifecycle:** `GET /b/<slug>/access` (rate-limited; returns `action ∈ {open, setup, login}`, plus a candidate `secret`+`otpauth` for setup), `POST /b/<slug>/setup`, `/login`, `/logout`, `/settings` (admin), `/delete_board` (admin).
 - **curl:** front page (`/`, `/b/<slug>`) renders plain text when the UA looks like curl/wget (`wants_plaintext`). Headless auth = a live code in the `X-TOTP` header (or `totp` param); stateless, does not consume a session slot.
@@ -51,7 +57,7 @@ Deletion (manual or retention) renames the file to `<path>.deleted` (soft delete
 - **Sessions:** Flask's signed `session` cookie holds `{slug: token}`. The registry keeps the last `MAX_SESSIONS` (default 7) tokens per board in a `deque(maxlen=...)`; a new login evicts the oldest. `board_authed` is valid-token-OR-live-TOTP, cached per request on `flask.g`.
 - **TSVZ deletion:** requires TSVZ >= 3.39, where a single-key `del` survives a reload. Tombstones written by 3.38 and older (`<sep>` fillers) still reload as blank rows in existing index files; `_stale()` treats a blank row as stale, and purging it writes a proper tombstone.
 - `Boards.state()` loads a board's index under the registry lock (one TSVZ writer per file) and returns `None` for an unregistered slug, so a request racing a board deletion 404s instead of recreating its directory.
-- **Admin CLI:** `python app.py admin <list|remove-board|regen-totp>`, run while the service is stopped (it mutates files the running process caches). `regen-totp` is the only lost-secret recovery.
+- **Admin CLI:** `python app.py admin <list|remove-board|regen-totp>`, run while the service is stopped (it mutates files the running process caches). It first `chdir`s to the app's folder (where the server runs and relative config paths resolve), so it works from any directory. `regen-totp` is the only lost-secret recovery.
 
 ### Live updates
 There is no websocket/SSE. Each board has its own `BoardState.last_update` (ns), bumped on every mutation. The client (`scripts.js`) polls the board-scoped `GET /last-update` every 5s and re-fetches `/messages` on change. A `401` (private, not authed) stops the poll and shows the locked panel. `renderMessages` updates the list by message id (adds new, removes gone), so a playing video or a Show Raw toggle survives other posts.
@@ -63,7 +69,7 @@ There is no websocket/SSE. Each board has its own `BoardState.last_update` (ns),
 
 ### Config
 - `DEFAULT_CONFIG` (top of `app.py`) holds the defaults; `load_config()` overlays the first JSON file found in `CONFIG_SEARCH_PATHS` (`./wpaste.config.json`, `~/.wpaste.config.json`, `~/.config/wpaste/wpaste.config.json`, `/etc/wpaste.config.json`). Only keys present in `DEFAULT_CONFIG` are honored. `wpaste.config.example.json` is the committed template; `wpaste.config.json` is gitignored.
-- `parse_size` accepts bytes or `"16GB"`/`"100MB"` strings; `parse_duration` accepts seconds or `"4h"`/`"30m"` strings. Applied to `RETENTION_SIZE`/`MAX_CONTENT_LENGTH` (sizes) and `RETENTION_TIME` (duration).
+- `parse_size` accepts bytes or `"16GB"`/`"100MB"` strings; `parse_duration` accepts seconds or `"4h"`/`"30m"` strings. Both raise `ValueError` on negative or non-finite values (a negative retention would purge everything; `0` means never). Applied to `RETENTION_SIZE`/`MAX_CONTENT_LENGTH` (sizes), `RETENTION_TIME`/`DELETED_RETENTION_TIME` (durations), and a board's retention in Settings.
 - Core keys: `BASE_DIR`, `INDEX_FILE`, `INDEX_REWRITE_INTERVAL`, `RETENTION_SIZE` (100MB, hard-delete vs soft-delete threshold), `RETENTION_TIME` (4h; `0` disables purge), `DELETED_RETENTION_TIME` (7d; how long `.deleted` files are kept; `0` = forever), `MAX_CONTENT_LENGTH` (16GB upload cap), `HOST`/`PORT`/`DEBUG`.
 - Private-board keys: `BOARDS_DIR`, `REGISTRY_FILE`, `SECRET_KEY` (cookie signing; blank → generated to `.wpaste_secret` atomically at `0o600`; a too-permissive existing file is refused and regenerated), `MAX_SESSIONS` (7), `PREFER_SECURE_COOKIES` (also makes `index.html` hop plain-HTTP default-port visitors to HTTPS client-side — browsers drop a `Secure` cookie set over HTTP, so a login there never sticks), `ACCESS_RATE_LIMIT`/`ACCESS_RATE_WINDOW` (existence-lookup throttle).
 - TOTP lockout keys: `TOTP_MAX_FAILURES` (per IP) **and** `TOTP_BOARD_MAX_FAILURES` (per board across all IPs — so XFF/IP rotation can't reset it) within `TOTP_LOCKOUT_TIME`.
