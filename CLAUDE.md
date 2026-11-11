@@ -47,10 +47,10 @@ Every message route exists twice via Flask `defaults=`: a bare path for the defa
 - **curl:** front page (`/`, `/b/<slug>`) renders plain text when the UA looks like curl/wget (`wants_plaintext`). Headless auth = a live code in the `X-TOTP` header (or `totp` param); stateless, does not consume a session slot.
 
 ### Delete semantics (`delete_file_on_disk`)
-Deletion (manual or retention) renames the file to `<path>.deleted` (soft delete) and resets its mtime to the deletion time, **unless** it exceeds `RETENTION_SIZE`, in which case it's hard-removed. The sweep removes `.deleted` files once their mtime is older than `DELETED_RETENTION_TIME` (`0` = keep forever).
+Deletion (manual or retention) removes the file with `os.remove`; there is no undo. Before 2026-11-11 it renamed files to `<path>.deleted` (soft delete, governed by the now-removed `RETENTION_SIZE`/`DELETED_RETENTION_TIME`) — see `docs/lessons-full.md`.
 
 ### Background sweep
-`sweep()` runs every 60s in one daemon thread, started by the first request (`start_sweeper`, so the debug reloader's parent and the admin CLI never sweep). It calls `live_rows` on the default board and every registered board — so retention holds on boards nobody opens — then walks `BASE_DIR` and `BOARDS_DIR` removing expired `.deleted` files.
+`sweep()` runs every 60s in one daemon thread, started by the first request (`start_sweeper`, so the debug reloader's parent and the admin CLI never sweep). It calls `live_rows` on the default board and every registered board — so retention holds on boards nobody opens.
 
 ### Private boards & auth (`boards.py`)
 - **Permission ladder** (`can()`): `private` < `read` < `append` < `public`. New named boards default to `private`; the default/root board is `public`. "Owner" == any holder of a valid session — TOTP is the only credential, so `admin` actions (settings/delete-board) just require `authed`.
@@ -69,8 +69,8 @@ There is no websocket/SSE. Each board has its own `BoardState.last_update` (ns),
 
 ### Config
 - `DEFAULT_CONFIG` (top of `app.py`) holds the defaults; `load_config()` overlays the first JSON file found in `CONFIG_SEARCH_PATHS` (`./wpaste.config.json`, `~/.wpaste.config.json`, `~/.config/wpaste/wpaste.config.json`, `/etc/wpaste.config.json`). Only keys present in `DEFAULT_CONFIG` are honored. `wpaste.config.example.json` is the committed template; `wpaste.config.json` is gitignored.
-- `parse_size` accepts bytes or `"16GB"`/`"100MB"` strings; `parse_duration` accepts seconds or `"4h"`/`"30m"` strings. Both raise `ValueError` on negative or non-finite values (a negative retention would purge everything; `0` means never). Applied to `RETENTION_SIZE`/`MAX_CONTENT_LENGTH` (sizes), `RETENTION_TIME`/`DELETED_RETENTION_TIME` (durations), and a board's retention in Settings.
-- Core keys: `BASE_DIR`, `INDEX_FILE`, `INDEX_REWRITE_INTERVAL`, `RETENTION_SIZE` (100MB, hard-delete vs soft-delete threshold), `RETENTION_TIME` (4h; `0` disables purge), `DELETED_RETENTION_TIME` (7d; how long `.deleted` files are kept; `0` = forever), `MAX_CONTENT_LENGTH` (16GB upload cap), `HOST`/`PORT`/`DEBUG`.
+- `parse_size` accepts bytes or `"16GB"`/`"100MB"` strings; `parse_duration` accepts seconds or `"4h"`/`"30m"` strings. Both raise `ValueError` on negative or non-finite values (a negative retention would purge everything; `0` means never). Applied to `MAX_CONTENT_LENGTH` (size), `RETENTION_TIME` (duration), and a board's retention in Settings.
+- Core keys: `BASE_DIR`, `INDEX_FILE`, `INDEX_REWRITE_INTERVAL`, `RETENTION_TIME` (4h; `0` disables purge), `MAX_CONTENT_LENGTH` (16GB upload cap), `HOST`/`PORT`/`DEBUG`.
 - Private-board keys: `BOARDS_DIR`, `REGISTRY_FILE`, `SECRET_KEY` (cookie signing; blank → generated to `.wpaste_secret` atomically at `0o600`; a too-permissive existing file is refused and regenerated), `MAX_SESSIONS` (7), `PREFER_SECURE_COOKIES` (also makes `index.html` hop plain-HTTP default-port visitors to HTTPS client-side — browsers drop a `Secure` cookie set over HTTP, so a login there never sticks), `ACCESS_RATE_LIMIT`/`ACCESS_RATE_WINDOW` (existence-lookup throttle).
 - TOTP lockout keys: `TOTP_MAX_FAILURES` (per IP) **and** `TOTP_BOARD_MAX_FAILURES` (per board across all IPs — so XFF/IP rotation can't reset it) within `TOTP_LOCKOUT_TIME`.
 - `TRUSTED_PROXY_HOPS` (default 0): number of trusted reverse proxies. When >0 the app wraps `wsgi_app` in Werkzeug `ProxyFix(x_for=hops)` so `request.remote_addr` (which `get_client_ip()` returns) is the real client. Behind a proxy with hops left at 0, every client collapses to the proxy IP and shares one rate-limit/lockout bucket. Never hand-parse `X-Forwarded-For` (its client-facing end is spoofable).

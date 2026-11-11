@@ -50,7 +50,6 @@ def fresh_state(monkeypatch):
     wpaste.default_board.index.clear()
     monkeypatch.setattr(wpaste, 'rate_limiter', RateLimiter())
     monkeypatch.setattr(wpaste, 'RETENTION_TIME', 0)
-    monkeypatch.setattr(wpaste, 'DELETED_RETENTION_TIME', 0)
 
 
 @pytest.fixture

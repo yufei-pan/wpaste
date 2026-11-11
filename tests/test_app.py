@@ -148,20 +148,18 @@ def test_files_on_a_private_board_need_the_code(client):
 
 
 # --- delete, retention, sweep --------------------------------------------------
-def test_delete_keeps_a_soft_deleted_copy(client):
+def test_delete_removes_the_file(client):
     client.post('/message', data={'message': 'secret-pw'})
     m = messages(client)[0]
     assert client.post(f"/delete/{m['id']}").get_json()['success']
     assert messages(client) == []
-    [path] = glob.glob(f"messages/*/{m['id']}.txt.deleted")
-    assert time.time() - os.path.getmtime(path) < 5      # clock starts at deletion
+    assert glob.glob(f"messages/*/{m['id']}*") == []
 
-def test_delete_hard_deletes_files_over_retention_size(client, monkeypatch):
-    monkeypatch.setattr(wpaste, 'RETENTION_SIZE', 1)
-    client.post('/message', data={'message': 'big enough'})
+def test_delete_of_a_missing_file_still_succeeds(client):
+    client.post('/message', data={'message': 'already gone'})
     mid = messages(client)[0]['id']
-    client.post(f'/delete/{mid}')
-    assert glob.glob(f'messages/*/{mid}*') == []
+    os.remove(wpaste.mainIndex[mid][2])
+    assert client.post(f'/delete/{mid}').get_json()['success']
 
 def test_delete_all_needs_permission(client):
     slug, _ = new_board(client, 'append')
@@ -177,7 +175,7 @@ def test_expired_messages_disappear(client, monkeypatch):
     monkeypatch.setattr(wpaste, 'RETENTION_TIME', 3600)
     assert client.get(f'/text/{mid}').status_code == 404
     assert messages(client) == []
-    assert glob.glob(f'messages/*/{mid}.txt.deleted')
+    assert glob.glob(f'messages/*/{mid}*') == []
 
 def test_board_retention_overrides_the_site_default(client, monkeypatch):
     monkeypatch.setattr(wpaste, 'RETENTION_TIME', 3600)
@@ -197,18 +195,7 @@ def test_sweep_expires_boards_nobody_opens(client, monkeypatch):
     monkeypatch.setattr(wpaste, 'RETENTION_TIME', 3600)
     wpaste.sweep()
     assert mid not in index
-    assert glob.glob(f'{wpaste.BOARDS_DIR}{slug}/*/{mid}.txt.deleted')
-
-@pytest.mark.parametrize('keep_for, removed', [(3600, True), (0, False)])
-def test_sweep_removes_old_soft_deleted_files(client, monkeypatch, keep_for, removed):
-    client.post('/message', data={'message': 'gone soon'})
-    mid = messages(client)[0]['id']
-    client.post(f'/delete/{mid}')
-    [path] = glob.glob(f'messages/*/{mid}.txt.deleted')
-    os.utime(path, (time.time() - 7200, time.time() - 7200))
-    monkeypatch.setattr(wpaste, 'DELETED_RETENTION_TIME', keep_for)
-    wpaste.sweep()
-    assert os.path.exists(path) != removed
+    assert glob.glob(f'{wpaste.BOARDS_DIR}{slug}/*/{mid}*') == []
 
 
 # --- board settings and deletion -----------------------------------------------

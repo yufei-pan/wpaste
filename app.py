@@ -44,9 +44,7 @@ DEFAULT_CONFIG = {
     'BASE_DIR': 'messages/',                        # where default-board files live
     'INDEX_FILE': 'mainIndex.tsv',                  # TSVZ-backed default-board index
     'INDEX_REWRITE_INTERVAL': 3600 * 20,            # TSVZ compaction interval (s)
-    'RETENTION_SIZE': '100MB',                       # hard-delete files larger than this
     'RETENTION_TIME': '4h',                          # purge entries older than this (0 = never)
-    'DELETED_RETENTION_TIME': '7d',                  # remove soft-deleted (.deleted) files after this (0 = keep forever)
     'MAX_CONTENT_LENGTH': '16GB',                    # max accepted upload size
     'HOST': '127.0.0.1',                             # dev server bind host
     'PORT': 5000,                                    # dev server bind port
@@ -124,9 +122,7 @@ _config = load_config()
 BASE_DIR = _config['BASE_DIR']
 INDEX_FILE = _config['INDEX_FILE']
 INDEX_REWRITE_INTERVAL = int(_config['INDEX_REWRITE_INTERVAL'])
-RETENTION_SIZE = parse_size(_config['RETENTION_SIZE'])  # hard-delete files bigger than this
 RETENTION_TIME = parse_duration(_config['RETENTION_TIME'])  # purge entries older than this (0 = never)
-DELETED_RETENTION_TIME = parse_duration(_config['DELETED_RETENTION_TIME'])  # 0 = keep .deleted files forever
 MAX_CONTENT_LENGTH = parse_size(_config['MAX_CONTENT_LENGTH'])
 BOARDS_DIR = _config['BOARDS_DIR']
 REGISTRY_FILE = _config['REGISTRY_FILE']
@@ -242,25 +238,18 @@ def validate_image(stream):
     return None
 
 def delete_file_on_disk(index, message_id):
-    '''Soft-delete (rename to <path>.deleted) unless the file exceeds
-    RETENTION_SIZE, in which case hard-delete. The sweep removes .deleted files
-    DELETED_RETENTION_TIME after their deletion.'''
+    '''Remove a message's file from disk. Delete (and retention expiry) means
+    the content is gone and the space is back; there is no undo.'''
     if message_id not in index:
         print(f"Message {message_id} not found in index.")
         return
-    old_file_path = index[message_id][2]
-    new_file_path = f"{old_file_path}.deleted"
-    if os.path.exists(old_file_path):
-        try:
-            if os.path.getsize(old_file_path) > RETENTION_SIZE:
-                os.remove(old_file_path)
-            else:
-                os.rename(old_file_path, new_file_path)
-                os.utime(new_file_path)   # the cleanup clock starts at deletion
-        except OSError as e:
-            print(f"Could not delete/rename {old_file_path}: {e}")
-    else:
-        print(f"File not found: {old_file_path}")
+    file_path = index[message_id][2]
+    try:
+        os.remove(file_path)
+    except FileNotFoundError:
+        print(f"File not found: {file_path}")
+    except OSError as e:
+        print(f"Could not delete {file_path}: {e}")
     print(f"Message {message_id} deleted successfully.")
 
 
@@ -420,8 +409,7 @@ def live_rows(state):
 
 
 # ---------------------------------------------------------------------------
-# Background sweep: retention holds even on boards nobody opens, and
-# soft-deleted files are removed once DELETED_RETENTION_TIME has passed.
+# Background sweep: retention holds even on boards nobody opens.
 # ---------------------------------------------------------------------------
 SWEEP_INTERVAL = 60   # seconds
 
@@ -434,20 +422,6 @@ def sweep():
             live_rows(state)
         except Exception as e:
             print(f"Sweep of board {state.slug or '(default)'} failed: {e}")
-    if not DELETED_RETENTION_TIME:
-        return
-    cutoff = time.time() - DELETED_RETENTION_TIME
-    for top in (BASE_DIR, BOARDS_DIR):
-        for dirpath, _, names in os.walk(top):
-            for name in names:
-                if not name.endswith('.deleted'):
-                    continue
-                path = os.path.join(dirpath, name)
-                try:
-                    if os.path.getmtime(path) < cutoff:
-                        os.remove(path)
-                except OSError as e:
-                    print(f"Could not remove {path}: {e}")
 
 def _sweep_loop():
     while True:

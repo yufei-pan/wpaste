@@ -5,10 +5,8 @@
   "INDEX_FILE": "mainIndex.tsv",
   "INDEX_REWRITE_INTERVAL": 72000,
 
-  "_comment_retention": "RETENTION_TIME: purge messages older than this (0 = never). Deleted messages are kept as .deleted files for DELETED_RETENTION_TIME (0 = forever), except files larger than RETENTION_SIZE, which are removed at once.",
-  "RETENTION_SIZE": "100MB",
+  "_comment_retention": "RETENTION_TIME: delete messages older than this (0 = never). Deleted messages are removed from disk at once.",
   "RETENTION_TIME": "4h",
-  "DELETED_RETENTION_TIME": "7d",
   "MAX_CONTENT_LENGTH": "16GB",
 
   "HOST": "127.0.0.1",
