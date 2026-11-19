@@ -1,6 +1,7 @@
 '''Text files sent in the `text` field keep their name; reserved board names.'''
 import builtins
 import io
+import re
 
 import app as wpaste
 from boards import canonical_slug
@@ -175,3 +176,37 @@ def test_a_real_pdf_file_post_is_still_served_as_a_pdf(client):
     r = client.get(m['content'])
     assert r.headers['Content-Type'] == 'application/pdf'
     assert 'Content-Security-Policy' not in r.headers
+
+
+# --- a name with a control character is still downloadable --------------------------
+
+# What gunicorn accepts in a response header value (gunicorn/http/wsgi.py HEADER_VALUE_RE): a download of a post
+# whose Content-Disposition holds anything else is a 500.
+GUNICORN_HEADER_VALUE = re.compile(r'[ \t\x21-\x7e\x80-\xff]*')
+
+
+def test_a_name_with_control_characters_downloads_under_a_safe_name(client):
+    '''The page can store such a name (ESC, BEL, DEL, C1, TAB); gunicorn
+    refuses a Content-Disposition that holds one, so every download 500ed.
+    The stored name stays as sent; only the download name is made safe.'''
+    names = {'esc\x1bx.bin': 'esc_x.bin', 'bel\x07.bin': 'bel_.bin', 'del\x7f.bin': 'del_.bin',
+             'c1\x85.bin': 'c1_.bin', 'tab\tx.bin': 'tab_x.bin'}
+    for name in names:
+        r = client.post('/message', data={'file': (io.BytesIO(b'data ' + name.encode()), name)})
+        assert r.status_code == 200, name
+    got = {m['filename']: m for m in messages(client)}
+    assert set(got) == set(names)                         # stored and listed as sent
+    for name, safe in names.items():
+        r = client.get(got[name]['content'])
+        assert r.status_code == 200, name
+        assert r.data == b'data ' + name.encode()
+        disposition = r.headers['Content-Disposition']
+        assert GUNICORN_HEADER_VALUE.fullmatch(disposition), (name, disposition)
+        assert f'filename={safe}' in disposition or f'filename="{safe}"' in disposition, (name, disposition)
+
+
+def test_a_text_post_name_with_a_control_character_downloads_too(client):
+    [m] = post_text(client, (b'# hi\n', 'bad\x1bname.md'))
+    r = client.get(f"/text/{m['id']}")
+    assert r.status_code == 200
+    assert GUNICORN_HEADER_VALUE.fullmatch(r.headers['Content-Disposition'])

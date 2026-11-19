@@ -5,6 +5,7 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 from datetime import datetime
 import time
 import os
+import re
 import sys
 import math
 import random
@@ -199,6 +200,8 @@ app.config['MAX_FORM_MEMORY_SIZE'] = min(MAX_CONTENT_LENGTH, 64 * 1024**2)
 # /messages inlines every text post, so a text file gets the same bound as a
 # pasted message; a bigger one is kept as a file.
 TEXT_POST_MAX = app.config['MAX_FORM_MEMORY_SIZE']
+# C0, DEL and C1 control characters: replaced in the name a download is sent under.
+CONTROL_CHARS = re.compile(r'[\x00-\x1f\x7f-\x9f]')
 # get_file has several default-board rules (/image, /video, /file, /text); by
 # default Werkzeug 308-redirects all but one of them to that one.
 app.url_map.redirect_defaults = False
@@ -648,7 +651,10 @@ def get_file(slug, message_id):
     if _stale(row, board_retention(state.slug), time.time()):
         _purge(state, message_id)
         abort(404, description="Message not found.")
-    download_name = row[4]
+    # The stored name goes into Content-Disposition, and gunicorn refuses a header value with a control character
+    # (ESC, BEL, DEL: a 500 on every download of that post; Werkzeug itself refuses a newline). The page and the
+    # listing still show the name as stored.
+    download_name = CONTROL_CHARS.sub('_', row[4])
     # Confine to this board's directory before serving. Both sides are made
     # absolute: commonpath() refuses to compare absolute with relative, and
     # send_file() would resolve a relative path against the code folder rather
