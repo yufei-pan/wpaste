@@ -202,7 +202,8 @@ document.getElementById('messageForm').addEventListener('submit', async function
 			document.getElementById('progressBar').style.width = '0%';
 			openLoginModal(BOARD, BOARD_DISPLAY);
 		} else {
-			uploadProgress.textContent = xhr.status === 413 ? 'Too large' : 'Upload failed';
+			// 400: the server stored nothing (an empty send)
+			uploadProgress.textContent = xhr.status === 413 ? 'Too large' : xhr.status === 400 ? 'Nothing to send' : 'Upload failed';
 			uploadProgress.className = 'upload-failed';
 			document.getElementById('progressBar').style.width = '0%';
 		}

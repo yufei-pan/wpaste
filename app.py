@@ -247,6 +247,15 @@ def _is_utf8(data):
     except UnicodeDecodeError:
         return False
 
+def read_text(path):
+    '''A text post's content for display: UTF-8 whatever the locale (bad bytes
+    become U+FFFD, so one bad old file can't break the listing), minus one
+    leading BOM, which marked doesn't strip and so would show `# Title`
+    literally. /text/<id> sends the stored bytes as they are.'''
+    with open(path, 'r', encoding='utf-8', errors='replace') as file:
+        content = file.read()
+    return content[1:] if content.startswith('\ufeff') else content
+
 def delete_file_on_disk(index, message_id):
     '''Remove a message's file from disk. Delete (and retention expiry) means
     the content is gone and the space is back; there is no undo.'''
@@ -485,8 +494,7 @@ def render_plaintext(slug):
         ts = datetime.fromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
         if mtype == 'text':
             try:
-                with open(fpath, encoding='utf-8', errors='replace') as fh:
-                    body = fh.read()
+                body = read_text(fpath)
             except OSError:               # purged since live_rows() looked
                 continue
             lines.append(f'[{ts}] {mid} text')
@@ -531,6 +539,7 @@ def post_message(slug):
     if not os.path.exists(dir_path):
         os.makedirs(dir_path, exist_ok=True)
 
+    stored = 0      # a POST that stores nothing must not answer success
     message = request.form.get('message', '')
     if message.strip():
         file_id = generate_random_id(index)
@@ -540,18 +549,20 @@ def post_message(slug):
             file.write(message)
         index[file_id] = [str(datetime.now().timestamp()), file_path, 'text', f"{file_id}.txt"]
         state.bump()
+        stored += 1
 
     # A text file sent as a `text` part keeps its name, so the page can show it
     # by its name (.md as Markdown, code as plain text). It is stored as sent:
-    # one that isn't UTF-8, or is over TEXT_POST_MAX, is kept as a file
-    # instead, never garbled.
+    # one that isn't UTF-8 (a NUL byte is valid UTF-8, but means binary), or is
+    # over TEXT_POST_MAX, is kept as a file instead, never garbled.
     for upload in request.files.getlist('text'):
         if upload.filename == '':
             continue
         data = upload.stream.read(TEXT_POST_MAX + 1)
         upload.stream.seek(0)
         extension = os.path.splitext(upload.filename)[1]
-        msg_type = 'text' if len(data) <= TEXT_POST_MAX and _is_utf8(data) else 'file'
+        is_text = len(data) <= TEXT_POST_MAX and b'\0' not in data and _is_utf8(data)
+        msg_type = 'text' if is_text else 'file'
         if msg_type == 'text':
             extension = extension or '.txt'
         file_id = generate_random_id(index)
@@ -560,6 +571,7 @@ def post_message(slug):
         print(f"{msg_type.capitalize()} saved to {file_path}")
         index[file_id] = [str(datetime.now().timestamp()), file_path, msg_type, upload.filename]
         state.bump()
+        stored += 1
 
     for field in ('image', 'video', 'file'):
         for upload in request.files.getlist(field):
@@ -580,7 +592,10 @@ def post_message(slug):
             print(f"{msg_type.capitalize()} saved to {file_path}")
             index[file_id] = [str(datetime.now().timestamp()), file_path, msg_type, upload.filename]
             state.bump()
+            stored += 1
 
+    if not stored:
+        return jsonify({"success": False, "error": "nothing to post"}), 400
     return jsonify({"success": True, "message": "Message saved successfully."})
 
 
@@ -601,8 +616,7 @@ def get_messages(slug):
         file_path, msg_type = row[2], row[3]
         if msg_type == 'text':
             try:
-                with open(file_path, 'r', encoding='utf-8', errors='replace') as file:
-                    content = file.read()
+                content = read_text(file_path)
             except OSError:               # purged since live_rows() looked
                 continue
         elif msg_type in ('image', 'video', 'file'):
@@ -645,8 +659,13 @@ def get_file(slug, message_id):
         abort(404, description="Path not valid.")
     if not os.path.exists(file_path):
         abort(404, description="File not found.")
-    kind = filetype.guess(file_path)
-    mime = kind.mime if kind else (mimetypes.guess_type(download_name)[0] or 'application/octet-stream')
+    if row[3] == 'text':
+        # Whatever its bytes or name suggest: sniffing would serve text that
+        # starts %PDF- as a PDF (no sandbox), BM or PK.. as an image or a zip.
+        mime = 'text/plain'     # Werkzeug adds the charset
+    else:
+        kind = filetype.guess(file_path)
+        mime = kind.mime if kind else (mimetypes.guess_type(download_name)[0] or 'application/octet-stream')
     response = send_file(file_path, mimetype=mime, download_name=download_name)
     response.headers['X-Content-Type-Options'] = 'nosniff'
     # An uploaded HTML/SVG page opened directly runs in a sandbox with no

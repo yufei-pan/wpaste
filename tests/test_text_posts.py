@@ -82,3 +82,96 @@ def test_paste_unchanged(client):
     client.post('/message', data={'message': 'just a paste'})
     [m] = messages(client)
     assert (m['type'], m['filename'], m['content']) == ('text', f"{m['id']}.txt", 'just a paste')
+
+
+# --- a POST that stores nothing says so ------------------------------------------
+
+def test_post_that_stores_nothing_is_a_400(client):
+    '''A plain `text` form value is not a file part, an empty or blank message
+    and a part with no name store nothing: none of them may answer success.'''
+    cases = [
+        {'text': 'a form value, not a file'},
+        {'message': ''},
+        {'message': ' \n\t '},
+        {'text': (io.BytesIO(b'nameless'), '')},
+        {'file': (io.BytesIO(b'nameless'), '')},
+        {},
+    ]
+    for data in cases:
+        r = client.post('/message', data=data)
+        assert r.status_code == 400, data
+        assert r.get_json() == {'success': False, 'error': 'nothing to post'}, data
+    assert messages(client) == []
+
+
+def test_post_that_stores_something_is_still_200(client):
+    r = client.post('/message', data={'message': 'x', 'text': 'ignored value'})
+    assert r.status_code == 200 and r.get_json()['success'] is True
+    r = client.post('/message', data={'text': 'ignored value', 'file': (io.BytesIO(b'f'), 'f.bin')})
+    assert r.status_code == 200
+    assert sorted(m['type'] for m in messages(client)) == ['file', 'text']
+
+
+def test_nothing_to_post_on_a_private_board_still_needs_the_code_first(client):
+    slug, _ = new_board(client)
+    anon = wpaste.app.test_client()
+    assert anon.post(f'/b/{slug}/message', data={'message': ''}).status_code == 401
+    assert client.post(f'/b/{slug}/message', data={'message': ''}).status_code == 400
+
+
+# --- a NUL byte means binary -----------------------------------------------------
+
+def test_text_part_with_a_nul_byte_is_a_file(client):
+    '''A NUL byte is valid UTF-8, but text never holds one: it is binary, and
+    inlining it would put it in every listing.'''
+    data = b'looks like text\x00but is not\n'
+    [m] = post_text(client, (data, 'blob.txt'))
+    assert (m['type'], m['filename']) == ('file', 'blob.txt')
+    assert client.get(m['content']).data == data
+
+
+# --- display strips a leading BOM, the stored bytes keep it ------------------------
+
+def test_leading_bom_is_stripped_for_display_only(client):
+    '''marked doesn't strip U+FEFF, so `# Title` after a BOM would show
+    literally. /messages and the curl view drop one; /text is exact.'''
+    raw = b'\xef\xbb\xbf# Title\n'
+    [m] = post_text(client, (raw, 'bom.md'))
+    assert m['content'] == '# Title\n'
+    assert client.get(f"/text/{m['id']}").data == raw
+    page = client.get('/', headers={'User-Agent': 'curl/8.5'}).get_data(as_text=True)
+    assert '# Title' in page and '﻿' not in page
+    client.post('/message', data={'message': '﻿# Pasted'})
+    assert '# Pasted' in [x['content'] for x in messages(client)]
+    # only one: a second BOM is content
+    [two] = [x for x in post_text(client, (b'\xef\xbb\xbf\xef\xbb\xbf2\n', 'two.md')) if x['filename'] == 'two.md']
+    assert two['content'] == '﻿2\n'
+
+
+# --- every text post is served as text, whatever its bytes look like ---------------
+
+def test_text_post_is_served_as_plain_text_whatever_it_starts_with(client):
+    '''filetype sniffs content: text starting %PDF-, BM or PK would be served as
+    a PDF (no sandbox CSP), an image or a zip.'''
+    bodies = {'a.txt': b'%PDF-1.4 but really text\n', 'b.txt': b'BM is a pair of letters\n',
+              'c.txt': b'PK\x03\x04 and then words\n', 'd.html': b'<script>alert(1)</script>\n',
+              'e.svg': b'<svg xmlns="http://www.w3.org/2000/svg"><script>1</script></svg>\n'}
+    got = post_text(client, *[(data, name) for name, data in bodies.items()])
+    assert {m['filename'] for m in got} == set(bodies)
+    for m in got:
+        assert m['type'] == 'text', m['filename']
+        r = client.get(f"/text/{m['id']}")
+        assert r.data == bodies[m['filename']]
+        assert r.headers['Content-Type'] == 'text/plain; charset=utf-8', m['filename']
+        assert r.headers['X-Content-Type-Options'] == 'nosniff'
+        assert r.headers['Content-Security-Policy'] == 'sandbox', m['filename']
+
+
+def test_a_real_pdf_file_post_is_still_served_as_a_pdf(client):
+    r = client.post('/message', data={'file': (io.BytesIO(b'%PDF-1.4\n%\xe2\xe3\xcf\xd3\n'), 'doc.pdf')})
+    assert r.status_code == 200
+    [m] = messages(client)
+    assert m['type'] == 'file'
+    r = client.get(m['content'])
+    assert r.headers['Content-Type'] == 'application/pdf'
+    assert 'Content-Security-Policy' not in r.headers
