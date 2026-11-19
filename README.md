@@ -95,9 +95,12 @@ curl -H 'X-TOTP: 123456' -F 'text=@notes.md' https://host/b/myboard/message
 
 A text file sent as a `text` part keeps its name, and the page shows it by
 that name: `.md` as Markdown, `.html` as HTML, anything else (code, logs) as
-plain text. A file that isn't UTF-8, or is bigger than a pasted message may be,
-is kept as a download instead. Pasted text (`message`) is shown by what it
-looks like. The other upload parts are `image`, `video` and `file`.
+plain text. A file that isn't UTF-8 (or holds a NUL byte), or is bigger than a
+pasted message may be, is kept as a download instead. Pasted text (`message`) is
+shown by what it looks like. The other upload parts are `image`, `video` and
+`file`. A POST that stores nothing (a blank message, a `text` value that is not
+a file, a part with no file name) answers `400 {"success": false, "error":
+"nothing to post"}`.
 
 The names `default` and `main` are reserved for the public board, so no private
 board can take them. **Upgrading?** A board already named `main` can no longer be

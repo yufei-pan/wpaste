@@ -40,3 +40,21 @@
   default encoding made the bytes on disk mean different things on different servers.
 - Lesson: a post's kind should come from what the sender knows (its name); guessing from content
   belongs only where nothing else is known.
+
+## 2026-11-18 A POST that stores nothing is a 400
+- Changed: `POST /message` and `/b/<slug>/message` answer `400 {"success": false, "error": "nothing to
+  post"}` when the request stored nothing, where they answered `200 {"success": true}`. That covers a blank
+  `message`, a `text` value that is a plain form value and not a file part, and a file part with no file
+  name. The page shows "Nothing to send" for it. In the same round a `text` part holding a NUL byte is
+  stored as a `file` (it is valid UTF-8, but binary), `/messages` and the curl view drop one leading BOM,
+  and every text post is served as `text/plain; charset=utf-8` whatever its bytes look like.
+- Why we had to change: the first `text` field answered success for a request that dropped what it carried.
+  A script sending `text=...` as a form value, or a file whose name the client could not make, was told
+  "saved" and found nothing on the board. Serving by content was the same kind of trust: text that began
+  `%PDF-` came back as a PDF without the sandbox policy that every other upload gets.
+- Original design was wrong because: success was the default of the handler, so every path that did
+  nothing looked the same as one that did something; and the file's type was decided by its content where
+  the post's own type was already known.
+- Lesson: an endpoint that takes several kinds of part answers success only when it stored something, so a
+  caller that sent the wrong shape is told at once; and where the server already knows what a stored thing
+  is, it serves it as that, not as what its bytes could pass for.
