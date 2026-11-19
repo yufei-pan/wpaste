@@ -19,7 +19,7 @@ function canonicalizeSlug(raw) {
 	if (!raw) return '';
 	let s = String(raw).trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
 	s = s.slice(0, 64).replace(/^-+|-+$/g, '');
-	if (!s || s === 'default') return '';
+	if (!s || s === 'default' || s === 'main') return '';
 	return s;
 }
 

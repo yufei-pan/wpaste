@@ -21,3 +21,6 @@ venv
 
 # Local systemd unit (keep wpaste.service.example tracked)
 wpaste.service
+
+# Worktrees for branch work
+.worktrees/

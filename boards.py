@@ -68,7 +68,7 @@ def can(perm, action, authed):
 # ---------------------------------------------------------------------------
 # Reserved values are compared AFTER canonicalization, so they must be in
 # canonical form ("default", not "__default__").
-RESERVED_SLUGS = {'default'}
+RESERVED_SLUGS = {'default', 'main'}   # both name the default/root board
 _SLUG_SUB = re.compile(r'[^a-z0-9]+')
 
 def canonical_slug(raw, maxlen=64):

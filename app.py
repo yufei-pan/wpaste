@@ -196,6 +196,9 @@ app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
 # A text message arrives as a form field, which Flask holds in memory and caps
 # at 500 KB by default — too small for a pasted log. Raise it, but keep a bound.
 app.config['MAX_FORM_MEMORY_SIZE'] = min(MAX_CONTENT_LENGTH, 64 * 1024**2)
+# /messages inlines every text post, so a text file gets the same bound as a
+# pasted message; a bigger one is kept as a file.
+TEXT_POST_MAX = app.config['MAX_FORM_MEMORY_SIZE']
 # get_file has several default-board rules (/image, /video, /file, /text); by
 # default Werkzeug 308-redirects all but one of them to that one.
 app.url_map.redirect_defaults = False
@@ -236,6 +239,13 @@ def validate_image(stream):
     if header[:2] == b'\xff\x0a' or header[:12] == b'\x00\x00\x00\x0cJXL \x0d\x0a\x87\x0a':
         return 'jxl'
     return None
+
+def _is_utf8(data):
+    try:
+        data.decode('utf-8')
+        return True
+    except UnicodeDecodeError:
+        return False
 
 def delete_file_on_disk(index, message_id):
     '''Remove a message's file from disk. Delete (and retention expiry) means
@@ -475,7 +485,7 @@ def render_plaintext(slug):
         ts = datetime.fromtimestamp(unix_time).strftime('%Y-%m-%d %H:%M:%S')
         if mtype == 'text':
             try:
-                with open(fpath) as fh:
+                with open(fpath, encoding='utf-8', errors='replace') as fh:
                     body = fh.read()
             except OSError:               # purged since live_rows() looked
                 continue
@@ -525,9 +535,30 @@ def post_message(slug):
     if message.strip():
         file_id = generate_random_id(index)
         file_path = os.path.join(dir_path, f"{file_id}.txt")
-        with open(file_path, 'w') as file:
+        # Text is stored and read as UTF-8 whatever the server's locale.
+        with open(file_path, 'w', encoding='utf-8') as file:
             file.write(message)
         index[file_id] = [str(datetime.now().timestamp()), file_path, 'text', f"{file_id}.txt"]
+        state.bump()
+
+    # A text file sent as a `text` part keeps its name, so the page can show it
+    # by its name (.md as Markdown, code as plain text). It is stored as sent:
+    # one that isn't UTF-8, or is over TEXT_POST_MAX, is kept as a file
+    # instead, never garbled.
+    for upload in request.files.getlist('text'):
+        if upload.filename == '':
+            continue
+        data = upload.stream.read(TEXT_POST_MAX + 1)
+        upload.stream.seek(0)
+        extension = os.path.splitext(upload.filename)[1]
+        msg_type = 'text' if len(data) <= TEXT_POST_MAX and _is_utf8(data) else 'file'
+        if msg_type == 'text':
+            extension = extension or '.txt'
+        file_id = generate_random_id(index)
+        file_path = os.path.join(dir_path, f"{file_id}{extension}")
+        upload.save(file_path)
+        print(f"{msg_type.capitalize()} saved to {file_path}")
+        index[file_id] = [str(datetime.now().timestamp()), file_path, msg_type, upload.filename]
         state.bump()
 
     for field in ('image', 'video', 'file'):
@@ -570,7 +601,7 @@ def get_messages(slug):
         file_path, msg_type = row[2], row[3]
         if msg_type == 'text':
             try:
-                with open(file_path, 'r') as file:
+                with open(file_path, 'r', encoding='utf-8', errors='replace') as file:
                     content = file.read()
             except OSError:               # purged since live_rows() looked
                 continue
