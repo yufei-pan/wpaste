@@ -247,8 +247,10 @@ def test_curl_view_prints_no_control_characters(client):
     view prints each as `_`, as a download name has it.'''
     curl = {'User-Agent': 'curl/8.5'}
     upload(client, 'file', b'x', 'evil\x1b[2Jname.bin')
+    upload(client, 'file', b'x', 'flip\u202egnp.bin')
     body = client.get('/', headers=curl).get_data(as_text=True)
     assert '(evil_[2Jname.bin)' in body
+    assert '(flip_gnp.bin)' in body       # U+202E is not a control character: it flips what follows it
     slug = 'b-' + uuid.uuid4().hex[:12]
     secret = pyotp.random_base32()
     r = client.post(f'/b/{slug}/setup', data={'secret': secret, 'code': pyotp.TOTP(secret).now(),
@@ -261,6 +263,12 @@ def test_curl_view_prints_no_control_characters(client):
     assert "Board 'bad_name_' is private." in anon
     for text in (body, anon):
         assert not wpaste.CONTROL_CHARS.search(text.replace('\n', ''))
+        assert all(c.isprintable() for c in text.replace('\n', '')), repr(text)
+
+
+def test_curl_hint_for_a_new_board_names_the_secret_form(client):
+    body = client.get('/b/never-made', headers={'User-Agent': 'curl/8.5'}).get_data(as_text=True)
+    assert 'does not exist' in body and '32 characters of A-Z and 2-7' in body, body
 
 
 def test_setup_takes_only_the_secret_the_page_offered(client):
@@ -281,27 +289,60 @@ def test_setup_takes_only_the_secret_the_page_offered(client):
         r = client.post(f'/b/{slug}/setup', data={'secret': secret, 'code': code})
         assert (what, r.status_code) == (what, 400), (what, r.get_json())
         assert r.get_json()['success'] is False
+        assert '32 characters of A-Z and 2-7' in r.get_json()['message'], what   # the 400 names the form it wants
         assert client.get(f'/b/{slug}/access').get_json()['exists'] is False, what
     slug = 'odd-' + uuid.uuid4().hex[:12]
     r = client.post(f'/b/{slug}/setup', data={'secret': offered, 'code': pyotp.TOTP(offered).now()})
     assert r.status_code == 200, r.get_json()
 
 
+def test_setup_stores_a_display_name_of_at_most_64_characters(client):
+    '''Setup is open to anyone and a form field may be 64 MiB: the display name is cut to 64 characters (the way a slug is
+    cut), and the reply, /access and the registry all hold that value. The page sends the slug as the name, so nothing it
+    sends is cut.'''
+    secret = pyotp.random_base32()
+    huge = 'x' * (20 * 1024**2)
+    slug = 'cap-' + uuid.uuid4().hex[:12]
+    r = client.post(f'/b/{slug}/setup', data={'secret': secret, 'code': pyotp.TOTP(secret).now(), 'display': huge})
+    assert r.status_code == 200, r.get_json()
+    assert r.get_json()['display'] == 'x' * 64
+    assert wpaste.boards.meta(slug)['display'] == 'x' * 64
+    assert client.get(f'/b/{slug}/access').get_json()['display'] == 'x' * 64
+    assert len(wpaste.boards.registry[slug][6]) == 64
+
+    # cut where a slug is cut, then stripped: a space or a dash at the cut does not stay
+    cases = {'a' * 63 + ' ' + 'b' * 10: 'a' * 63, '  padded name  ': 'padded name', 'é' * 100: 'é' * 64,
+             '   ': None, '': None}            # nothing left: the slug stands in
+    for display, want in cases.items():
+        slug = 'cap-' + uuid.uuid4().hex[:12]
+        r = client.post(f'/b/{slug}/setup', data={'secret': secret, 'code': pyotp.TOTP(secret).now(), 'display': display})
+        assert r.status_code == 200, (display, r.get_json())
+        assert r.get_json()['display'] == (want or slug), display
+        assert wpaste.boards.meta(slug)['display'] == (want or slug)
+    # the page's own name (a canonical slug, at most 64) goes through unchanged
+    slug = 'p' * 64
+    r = client.post(f'/b/{slug}/setup', data={'secret': secret, 'code': pyotp.TOTP(secret).now(), 'display': slug})
+    assert r.get_json()['display'] == slug
+    # /access offers what setup would store
+    assert client.get('/b/another-new/access', query_string={'display': 'y' * 5000}).get_json()['display'] == 'y' * 64
+
+
 # --- admin CLI -----------------------------------------------------------------
 def test_admin_list_prints_no_control_characters(tmp_path):
-    '''A board's display name is whatever the first visitor typed at setup, so `admin list` shows it with each control
-    character made `_`, as the curl view does: the operator's terminal acts on ESC sequences.'''
+    '''A board's display name is whatever the first visitor typed at setup, so `admin list` shows it with each character
+    that is not printable made `_`, as the curl view does: the operator's terminal acts on ESC sequences, and U+202E flips
+    the text after it.'''
     appdir = tmp_path / 'wpaste'
     appdir.mkdir()
     for name in ('app.py', 'boards.py'):
         shutil.copy(os.path.join(ROOT, name), appdir)
-    script = ("import app; app.boards.create('evil-board', 'bad\\x1b[2Jname\\x07\\x9b', secret=%r); "
+    script = ("import app; app.boards.create('evil-board', 'bad\\x1b[2Jname\\x07\\x9b\\u202e\\u200b', secret=%r); "
               "app.boards.registry.close(); app.mainIndex.close()" % pyotp.random_base32())
     subprocess.run([sys.executable, '-c', script], cwd=appdir, check=True, capture_output=True)
     out = subprocess.run([sys.executable, str(appdir / 'app.py'), 'admin', 'list'],
                          cwd=tmp_path, check=True, capture_output=True, text=True).stdout
-    assert 'display=bad_[2Jname__' in out
-    assert not re.search(r'[\x00-\x08\x0b-\x1f\x7f-\x9f]', out), repr(out)
+    assert 'display=bad_[2Jname____\n' in out          # ESC, BEL, C1, U+202E (right-to-left override) and U+200B
+    assert all(c.isprintable() for c in out.replace('\n', '').replace('\t', '')), repr(out)
 
 
 def test_admin_cli_finds_the_data_from_any_directory(tmp_path):

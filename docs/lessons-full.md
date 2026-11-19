@@ -73,3 +73,18 @@
   server could have required it back in that form.
 - Lesson: when a server hands out a value for the client to send back, it accepts that form only, not whatever its
   verifier happens to tolerate; other readers of what it stores then need no guess.
+
+## 2026-11-18 Setup stores a display name of at most 64 characters
+- Changed: `POST /b/<slug>/setup` stores the board's display name cut to 64 characters (`DISPLAY_MAX`, canonical_slug's
+  maxlen; stripped, and the slug when nothing is left) and answers with the stored value. `/access` offers the same cut
+  name. Before, it stored the name as sent, up to the form field's 64 MiB. The page sends the slug as the name, so
+  nothing it sends is cut. The 400 for a bad secret and the curl view's setup hint now name the form: 32 characters
+  of A-Z and 2-7.
+- Why we had to change: setup is open to anyone, the name goes into the registry row, and the row is written again
+  (setup writes it twice, every login once more). One anonymous POST with a 17 MiB name grew the registry past 16 MiB,
+  where a tool that reads the whole registry at once refuses it, and a name over 16 MiB survives the registry's own
+  compaction, so only deleting the board ends it.
+- Original design was wrong because: the name was handled as a label, so no one asked how big it could be, and the
+  only bound was the framework's per-field default, which is sized for a pasted log, not for a name.
+- Lesson: a field that anyone can set and the server stores gets a cap where it comes in, at what its real use needs
+  (here, the longest value the page itself sends), never at the framework's default for the largest legitimate field.

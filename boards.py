@@ -72,6 +72,11 @@ def can(perm, action, authed):
 RESERVED_SLUGS = {'default', 'main'}   # both name the default/root board
 _SLUG_SUB = re.compile(r'[^a-z0-9]+')
 
+# A board's display name is stored at most this long: canonical_slug's maxlen, because the page sends the slug as the
+# display name. Setup is the only place a name comes in, and anyone can call it: a form field may be 64 MiB, and the
+# row (name included) is written again on every login, so an uncapped name grew the registry by megabytes.
+DISPLAY_MAX = 64
+
 def canonical_slug(raw, maxlen=64):
     '''Fold arbitrary user input to a filesystem- and URL-safe slug, or return
     None if nothing usable remains. Distinct inputs that fold to the same slug
@@ -85,15 +90,22 @@ def canonical_slug(raw, maxlen=64):
     return s
 
 
+def clean_display(raw, fallback):
+    '''A board's display name as stored: stripped and cut to DISPLAY_MAX characters the way canonical_slug cuts a slug,
+    or `fallback` (the slug) when nothing is left.'''
+    return (str(raw or '').strip()[:DISPLAY_MAX].strip()) or fallback
+
+
 # ---------------------------------------------------------------------------
 # TOTP helpers
 # ---------------------------------------------------------------------------
 def new_secret():
     return pyotp.random_base32()
 
-# What new_secret() makes: 32 characters of A-Z and 2-7. Setup takes back the candidate that /access offered and nothing
-# else, so a client that makes codes from the registry can rely on the form (a secret that verifies here but that such a
-# client refuses would leave the board with no working code for it).
+# What new_secret() makes: 32 characters of A-Z and 2-7. Setup takes only that form (it is checked, not that the secret
+# came from /access: any 32 such characters pass), so a client that makes codes from the registry can rely on the form.
+# A secret that verifies here but that such a client refuses (lower case, short) would leave the board with no working
+# code for it.
 SECRET_FORM = re.compile(r'[A-Z2-7]{32}')
 
 def valid_secret_form(secret):
@@ -275,7 +287,8 @@ class Boards:
     def create(self, slug, display, perm=DEFAULT_PERM, retention='', secret=None):
         '''Atomically register a NEW board and return its TOTP secret, or None if
         a board with this slug already exists. No session yet. Pass `secret` to
-        commit a secret already shown to the user as a QR.'''
+        commit a secret already shown to the user as a QR. The display name is
+        stored through clean_display (at most DISPLAY_MAX characters).'''
         secret = secret or new_secret()
         with self._lock:
             if slug in self.registry:
@@ -283,7 +296,7 @@ class Boards:
             self._write_row(slug, secret=secret,
                             perm=perm if perm in PERMS else DEFAULT_PERM,
                             retention=retention, tokens=[],
-                            created=int(time.time()), display=display or slug)
+                            created=int(time.time()), display=clean_display(display, slug))
         return secret
 
     def set_perm(self, slug, perm):

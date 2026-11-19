@@ -17,7 +17,7 @@ import TSVZ
 #import imghdr
 import filetype
 
-from boards import (Boards, BoardState, RateLimiter, canonical_slug, can,
+from boards import (Boards, BoardState, RateLimiter, canonical_slug, clean_display, can,
                     new_secret, valid_secret_form, verify_code, provisioning_uri,
                     PERMS, DEFAULT_PERM, PUBLIC_PERM)
 
@@ -200,15 +200,23 @@ app.config['MAX_FORM_MEMORY_SIZE'] = min(MAX_CONTENT_LENGTH, 64 * 1024**2)
 # /messages inlines every text post, so a text file gets the same bound as a
 # pasted message; a bigger one is kept as a file.
 TEXT_POST_MAX = app.config['MAX_FORM_MEMORY_SIZE']
-# C0, DEL and C1 control characters: replaced (safe_name) in the name a download
-# is sent under and in the names the curl view prints.
+# C0, DEL and C1 control characters: replaced (safe_name) in the name a download is sent under.
 CONTROL_CHARS = re.compile(r'[\x00-\x1f\x7f-\x9f]')
 
 
 def safe_name(name):
     '''A stored name with every control character made `_`: gunicorn refuses a
-    header value holding ESC, BEL or DEL, and a terminal acts on them.'''
+    header value holding ESC, BEL or DEL.'''
     return CONTROL_CHARS.sub('_', name)
+
+
+def terminal_name(name):
+    '''A stored name for a terminal (the curl view, `admin list`): every character
+    that is not printable made `_`, as str.isprintable has it. That is the controls
+    safe_name replaces and also the format characters (U+202E, which flips the line
+    that follows it), line and paragraph separators and unassigned characters,
+    which a terminal also acts on or hides things behind.'''
+    return ''.join(c if c.isprintable() else '_' for c in name)
 
 # get_file has several default-board rules (/image, /video, /file, /text); by
 # default Werkzeug 308-redirects all but one of them to that one.
@@ -487,14 +495,15 @@ def render_plaintext(slug):
     else:
         if not boards.exists(slug):
             return (f"Board '{slug}' does not exist.\n"
-                    f"Create it: POST to {base}/b/{slug}/setup with a TOTP secret + code.\n")
+                    f"Create it: POST to {base}/b/{slug}/setup with the form fields secret (32 characters of A-Z and 2-7)\n"
+                    f"and code (that secret's current 6-digit TOTP code).\n")
         m = boards.meta(slug)
         perm = m['perm']
         if not can(perm, 'read', board_authed(slug)):
-            return (f"Board '{safe_name(m['display'])}' is private.\n"
+            return (f"Board '{terminal_name(m['display'])}' is private.\n"
                     f"Read it: curl -H 'X-TOTP: <code>' {base}/b/{slug}\n")
         state = boards.state(slug)
-        title = f"wpaste — board '{safe_name(m['display'])}' ({perm})"
+        title = f"wpaste — board '{terminal_name(m['display'])}' ({perm})"
     prefix = f'/b/{slug}' if slug else ''
     rows = live_rows(state)
 
@@ -511,7 +520,7 @@ def render_plaintext(slug):
             lines.append(f'[{ts}] {mid} text')
             lines.append(body.rstrip('\n'))
         else:
-            lines.append(f'[{ts}] {mid} {mtype}  {base}{prefix}/{mtype}/{mid}  ({safe_name(fname)})')
+            lines.append(f'[{ts}] {mid} {mtype}  {base}{prefix}/{mtype}/{mid}  ({terminal_name(fname)})')
         lines.append('-' * 60)
     auth_hint = '' if slug is None else "  -H 'X-TOTP: <code>'"
     lines += ['', f'post: curl -d "message=hello"{auth_hint} {base}{prefix}/message']
@@ -728,7 +737,7 @@ def board_access(slug):
         return jsonify({"ok": False, "message": "Invalid board name."}), 400
     if not boards.exists(cslug):
         candidate = new_secret()
-        display = (request.args.get('display') or slug).strip()
+        display = clean_display(request.args.get('display') or slug, cslug)    # what setup will store
         return jsonify({"ok": True, "slug": cslug, "exists": False, "action": "setup",
                         "display": display, "secret": candidate,
                         "otpauth": provisioning_uri(candidate, display)})
@@ -753,9 +762,8 @@ def board_setup(slug):
         return jsonify({"success": False, "message": "Too many attempts. Try again later."}), 429
     secret = (request.form.get('secret') or '').strip()
     code = (request.form.get('code') or '').strip()
-    display = (request.form.get('display') or slug).strip()
-    if not valid_secret_form(secret):       # the candidate /access offered: 32 base32 characters, upper case
-        return jsonify({"success": False, "message": "Invalid secret."}), 400
+    if not valid_secret_form(secret):       # the form new_secret() makes: 32 characters of A-Z and 2-7
+        return jsonify({"success": False, "message": "Invalid secret: use 32 characters of A-Z and 2-7."}), 400
     if not verify_code(secret, code):
         rate_limiter.record_failure(key)
         return jsonify({"success": False, "message": "Invalid code."}), 401
@@ -763,12 +771,13 @@ def board_setup(slug):
     # Atomic create: closes the check-then-create race where two concurrent
     # setups of the same new name would both succeed (the second resetting the
     # first's secret/session).
-    if boards.create(cslug, display, secret=secret) is None:
+    # The display name is stored cut to DISPLAY_MAX characters (create does it), and the reply says what was stored.
+    if boards.create(cslug, request.form.get('display') or slug, secret=secret) is None:
         return jsonify({"success": False, "message": "Board already exists.", "exists": True}), 409
     token = boards.issue_token(cslug)
     _set_session(cslug, token)
     return jsonify({"success": True, "slug": cslug, "perm": DEFAULT_PERM,
-                    "authed": True, "display": display})
+                    "authed": True, "display": boards.meta(cslug)['display']})
 
 
 @app.route('/b/<slug>/login', methods=['POST'])
@@ -854,9 +863,10 @@ def run_admin(argv):
             print('No boards.')
         for m in rows:
             ntok = len([t for t in boards.registry[m['slug']][4].split(',') if t])
-            # The display name is whatever the first visitor typed at setup: shown with its control characters made `_`.
+            # The display name is whatever the first visitor typed at setup: shown with every non-printable character
+            # made `_`.
             print(f"{m['slug']}\tperm={m['perm']}\tsessions={ntok}\tcreated={m['created']}"
-                  f"\tdisplay={safe_name(m['display'])}")
+                  f"\tdisplay={terminal_name(m['display'])}")
     elif args.cmd == 'remove-board':
         cslug = canonical_slug(args.slug)
         if cslug and boards.delete(cslug):

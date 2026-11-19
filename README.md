@@ -64,7 +64,8 @@ protected by a **TOTP** authenticator code — no usernames, no passwords.
   add the board on the same phone), and the secret. Scan it, enter the code, and
   you're in. **Save the secret — it is the only backup.** Lose it and the board
   is gone forever. The secret is the 32 upper-case base32 characters the page
-  offers; setup refuses any other with a 400.
+  offers (32 characters of A-Z and 2-7); setup refuses any other form with a 400.
+  A board's display name is stored at most 64 characters long (a longer one is cut).
 - **Existing board** → if it's private you're asked for a code; if it allows
   public reading you just see it.
 - A board owner (anyone holding the code) can set the board's **permission**
@@ -107,6 +108,9 @@ The names `default` and `main` are reserved for the public board, so no private
 board can take them. **Upgrading?** A board already named `main` can no longer be
 opened after the upgrade.
 
+Only wrong codes and `/access` lookups are rate-limited: successful setups and
+logins are not yet (see `docs/limitations.md`).
+
 ### Admin (server operator)
 
 There is no admin *account* — administration is done from the server shell while
@@ -115,7 +119,7 @@ The commands work from any directory: they use the data in wpaste's own folder,
 where the server runs.
 
 ```bash
-python app.py admin list                  # list boards
+python app.py admin list                  # list boards (names shown with non-printable characters as `_`)
 python app.py admin remove-board <name>   # delete a board and its data
 python app.py admin regen-totp <name>     # new secret (logs everyone out); prints QR/secret
 ```
