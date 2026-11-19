@@ -298,7 +298,23 @@ function buildTextElement(content, mode) {
 	return div;
 }
 
-function detectTextMode(content) {
+// A pasted text is stored as `<id>.txt`; a text file keeps the name it was
+// sent with (the `text` upload field).
+function isPaste(message) {
+	return !message.filename || message.filename === `${message.id}.txt`;
+}
+
+// A named text file is shown by its name, which the sender chose: a Markdown
+// file renders even when it holds only headings and paragraphs, and code
+// stays plain. Only a paste, where nothing else is known, is guessed from
+// its content.
+function detectTextMode(content, message) {
+	if (message && !isPaste(message)) {
+		const name = message.filename.toLowerCase();
+		if (/\.(md|markdown)$/.test(name)) return 'markdown';
+		if (/\.html?$/.test(name)) return 'html';
+		return 'plain';
+	}
 	if (isHTML(content)) {
 		return 'html';
 	}
@@ -395,10 +411,15 @@ function buildMessage(message) {
 	const contentContainer = document.createElement('div');
 	contentContainer.classList.add('content-container');
 
-	const textMode = message.type === 'text' ? detectTextMode(message.content) : 'plain';
+	const textMode = message.type === 'text' ? detectTextMode(message.content, message) : 'plain';
 	const view = { el: null, mode: textMode };
 
 	if (message.type === 'text') {
+		if (!isPaste(message)) {
+			const textName = document.createElement('p');
+			textName.textContent = message.filename;
+			contentContainer.appendChild(textName);
+		}
 		view.el = buildTextElement(message.content, textMode);
 
 	} else if (message.type === 'image') {
@@ -425,6 +446,14 @@ function buildMessage(message) {
 		view.el = video;
 
 	} else if (message.type === 'file') {
+		// The server keeps an SVG as a file (its image check doesn't know
+		// SVG). Shown as an image, it runs no script; the download stays.
+		if (/\.svg$/i.test(message.filename || '')) {
+			const svg = document.createElement('img');
+			svg.src = message.content;
+			svg.alt = message.filename;
+			contentContainer.appendChild(svg);
+		}
 		const a = document.createElement('a');
 		a.href = message.content;
 		a.textContent = message.filename || 'Download File';

@@ -432,6 +432,8 @@ textarea#message::placeholder { color: var(--muted); }
     font-size: 0.9rem;
 }
 .content-container > a:hover { background: var(--accent-ink); }
+/* An SVG file shows above its download link. */
+.content-container > img + a { margin-top: 0.75rem; }
 
 .content-container > pre.raw-link {
     margin: 0;
