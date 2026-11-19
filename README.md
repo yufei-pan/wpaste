@@ -63,7 +63,8 @@ protected by a **TOTP** authenticator code — no usernames, no passwords.
 - **New name** → a setup screen shows a QR code, an `otpauth://` link (tap it to
   add the board on the same phone), and the secret. Scan it, enter the code, and
   you're in. **Save the secret — it is the only backup.** Lose it and the board
-  is gone forever.
+  is gone forever. The secret is the 32 upper-case base32 characters the page
+  offers; setup refuses any other with a 400.
 - **Existing board** → if it's private you're asked for a code; if it allows
   public reading you just see it.
 - A board owner (anyone holding the code) can set the board's **permission**

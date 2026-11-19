@@ -58,3 +58,18 @@
 - Lesson: an endpoint that takes several kinds of part answers success only when it stored something, so a
   caller that sent the wrong shape is told at once; and where the server already knows what a stored thing
   is, it serves it as that, not as what its bytes could pass for.
+
+## 2026-11-18 Setup takes only the secret it offered
+- Changed: `POST /b/<slug>/setup` answers `400 {"success": false, "message": "Invalid secret."}` for a secret that
+  is not 32 characters of A-Z and 2-7, the form `/access` offers, where it stored any secret whose code verified
+  (16 lower-case characters, a short or long one, one with padding or in lower case). Nothing in the page changes:
+  it posts the candidate `/access` offered.
+- Why we had to change: pyotp reads a lower-case or short base32 secret as a valid one, so setup stored it. A
+  client that makes codes from the registry cannot tell such a secret from a misread one, and a code it guessed
+  wrong would count toward the board's lockout, which locks the owner's phone too; so it accepts only the form the
+  server makes.
+- Original design was wrong because: the server checked that the secret and the code agreed, which any base32 string
+  passes, and never that the secret was one the server would have made. The candidate came from the server, so the
+  server could have required it back in that form.
+- Lesson: when a server hands out a value for the client to send back, it accepts that form only, not whatever its
+  verifier happens to tolerate; other readers of what it stores then need no guess.

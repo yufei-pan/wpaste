@@ -91,6 +91,14 @@ def canonical_slug(raw, maxlen=64):
 def new_secret():
     return pyotp.random_base32()
 
+# What new_secret() makes: 32 characters of A-Z and 2-7. Setup takes back the candidate that /access offered and nothing
+# else, so a client that makes codes from the registry can rely on the form (a secret that verifies here but that such a
+# client refuses would leave the board with no working code for it).
+SECRET_FORM = re.compile(r'[A-Z2-7]{32}')
+
+def valid_secret_form(secret):
+    return bool(SECRET_FORM.fullmatch(secret or ''))
+
 def provisioning_uri(secret, display, issuer='wpaste'):
     return pyotp.TOTP(secret).provisioning_uri(name=display or 'board', issuer_name=issuer)
 

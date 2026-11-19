@@ -18,7 +18,7 @@ import TSVZ
 import filetype
 
 from boards import (Boards, BoardState, RateLimiter, canonical_slug, can,
-                    new_secret, verify_code, provisioning_uri,
+                    new_secret, valid_secret_form, verify_code, provisioning_uri,
                     PERMS, DEFAULT_PERM, PUBLIC_PERM)
 
 version = '1.7.0'
@@ -754,7 +754,9 @@ def board_setup(slug):
     secret = (request.form.get('secret') or '').strip()
     code = (request.form.get('code') or '').strip()
     display = (request.form.get('display') or slug).strip()
-    if not secret or not verify_code(secret, code):
+    if not valid_secret_form(secret):       # the candidate /access offered: 32 base32 characters, upper case
+        return jsonify({"success": False, "message": "Invalid secret."}), 400
+    if not verify_code(secret, code):
         rate_limiter.record_failure(key)
         return jsonify({"success": False, "message": "Invalid code."}), 401
     rate_limiter.clear_failures(key)
@@ -852,7 +854,9 @@ def run_admin(argv):
             print('No boards.')
         for m in rows:
             ntok = len([t for t in boards.registry[m['slug']][4].split(',') if t])
-            print(f"{m['slug']}\tperm={m['perm']}\tsessions={ntok}\tcreated={m['created']}\tdisplay={m['display']}")
+            # The display name is whatever the first visitor typed at setup: shown with its control characters made `_`.
+            print(f"{m['slug']}\tperm={m['perm']}\tsessions={ntok}\tcreated={m['created']}"
+                  f"\tdisplay={safe_name(m['display'])}")
     elif args.cmd == 'remove-board':
         cslug = canonical_slug(args.slug)
         if cslug and boards.delete(cslug):

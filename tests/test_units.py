@@ -118,10 +118,11 @@ def pacific(monkeypatch):
 
 def test_verify_code_in_the_hour_daylight_saving_repeats(pacific):
     '''pyotp before 2.12 counts a naive time from local time through time.mktime, which in the second 01:30 reads an
-    hour early: every valid code was refused, the phone's too. Both 01:30s take their own code.'''
+    hour early: every valid code was refused, the phone's too. Both 01:30s take their own code. Only what verify_code
+    does with an aware time is tested, so that the test holds on every pyotp (what the naive path does varies with the
+    pyotp and with libc's own state in the process, which one earlier call can change); that verify_code hands pyotp an
+    aware time is the next test.'''
     first, second = (datetime(2026, 11, 1, h, 30, tzinfo=timezone.utc) for h in (8, 9))   # 01:30 PDT, 01:30 PST
-    naive = datetime.fromtimestamp(second.timestamp())
-    assert time.mktime(naive.timetuple()) - second.timestamp() == -3600     # the premise: this hour is the broken one
     secret = pyotp.random_base32()
     for at in (first, second):
         assert boards.verify_code(secret, rfc6238(secret, at.timestamp()), now=at), at

@@ -1,5 +1,7 @@
+import base64
 import glob
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -261,7 +263,47 @@ def test_curl_view_prints_no_control_characters(client):
         assert not wpaste.CONTROL_CHARS.search(text.replace('\n', ''))
 
 
+def test_setup_takes_only_the_secret_the_page_offered(client):
+    '''/access offers a 32-character upper-case base32 secret, and setup takes that form only: another secret whose code
+    verifies (16 lower-case characters, a short or long one, padding, a wrong case) is a 400 and no board.'''
+    offered = pyotp.random_base32()
+    assert wpaste.valid_secret_form(offered) and len(offered) == 32
+    short = base64.b32encode(os.urandom(10)).decode()      # 16 characters: pyotp.random_base32 refuses to make one
+    odd = {'lower case, 16': short.lower(), 'upper case, 16': short, 'lower case, 32': offered.lower(),
+           'long': pyotp.random_base32(40), 'padded': offered[:30] + '==',
+           'spaced': ' '.join(offered[i:i + 8] for i in range(0, 32, 8)), 'empty': ''}
+    for what, secret in odd.items():
+        slug = 'odd-' + uuid.uuid4().hex[:12]
+        try:
+            code = pyotp.TOTP(secret).now()         # the right code, where pyotp can make one for it
+        except Exception:
+            code = '000000'
+        r = client.post(f'/b/{slug}/setup', data={'secret': secret, 'code': code})
+        assert (what, r.status_code) == (what, 400), (what, r.get_json())
+        assert r.get_json()['success'] is False
+        assert client.get(f'/b/{slug}/access').get_json()['exists'] is False, what
+    slug = 'odd-' + uuid.uuid4().hex[:12]
+    r = client.post(f'/b/{slug}/setup', data={'secret': offered, 'code': pyotp.TOTP(offered).now()})
+    assert r.status_code == 200, r.get_json()
+
+
 # --- admin CLI -----------------------------------------------------------------
+def test_admin_list_prints_no_control_characters(tmp_path):
+    '''A board's display name is whatever the first visitor typed at setup, so `admin list` shows it with each control
+    character made `_`, as the curl view does: the operator's terminal acts on ESC sequences.'''
+    appdir = tmp_path / 'wpaste'
+    appdir.mkdir()
+    for name in ('app.py', 'boards.py'):
+        shutil.copy(os.path.join(ROOT, name), appdir)
+    script = ("import app; app.boards.create('evil-board', 'bad\\x1b[2Jname\\x07\\x9b', secret=%r); "
+              "app.boards.registry.close(); app.mainIndex.close()" % pyotp.random_base32())
+    subprocess.run([sys.executable, '-c', script], cwd=appdir, check=True, capture_output=True)
+    out = subprocess.run([sys.executable, str(appdir / 'app.py'), 'admin', 'list'],
+                         cwd=tmp_path, check=True, capture_output=True, text=True).stdout
+    assert 'display=bad_[2Jname__' in out
+    assert not re.search(r'[\x00-\x08\x0b-\x1f\x7f-\x9f]', out), repr(out)
+
+
 def test_admin_cli_finds_the_data_from_any_directory(tmp_path):
     appdir = tmp_path / 'wpaste'
     appdir.mkdir()
