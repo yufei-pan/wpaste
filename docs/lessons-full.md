@@ -93,15 +93,19 @@
 
 ## 2026-11-19 One terminal rule, by Unicode category
 - Changed: the plain-text (curl) view and `admin list` now make `_` of exactly the characters in the Unicode categories
-  Cc, Cf, Cs, Zl and Zp (`terminal_text`, with `terminal_name` and the text bodies both calling it). Spaces of every kind
-  now stay, where `str.isprintable` made every Unicode space but U+0020 into `_`: a macOS screenshot name (U+202F before
-  AM/PM) reads as it was sent. Private-use and unassigned characters stay too. A text post's body in the curl view is now
+  Cc, Cf, Cs, Zl and Zp, except the three text-shaping Cf characters U+200C, U+200D and U+00AD (`terminal_text`, with
+  `terminal_name` and the text bodies both calling it). Spaces of every kind now stay, where `str.isprintable` made
+  every Unicode space but U+0020 into `_`: a macOS screenshot name (U+202F before AM/PM) reads as it was sent.
+  Private-use and unassigned characters stay too. A text post's body in the curl view is now
   filtered the same way (newline and tab kept), where it was printed as stored, so an anonymous post on the public board
   holding an OSC 52 sequence can no longer set the clipboard of whoever curls the board. `/text/<id>` still sends the
   stored bytes. The download header's `safe_name` is unchanged: it only removes what gunicorn refuses.
 - Why we had to change: four review rounds each found another way an outside name or text reached a terminal: a regex of
   controls, then `str.isprintable` (which also replaced the no-break spaces of real names and left the text bodies out),
-  then a copy of each in the client. Each call site had picked its own character rule.
+  then a copy of each in the client. Each call site had picked its own character rule. The category rule itself first
+  replaced every Cf character, which mangled ordinary text (U+200D inside an emoji such as a woman technologist, U+200C
+  in Persian or Indic text, U+00AD in web-copied text) though no terminal acts on them; those three are now kept, and
+  the bidi controls and U+200B stay replaced because they reorder or hide what a line shows.
 - Original design was wrong because: "safe to show on a terminal" was never decided once. Each new place that printed
   outside text wrote its own predicate, and each was right for the case in front of it and wrong for the next.
 - Lesson: decide what is safe to show on a terminal once, by Unicode category, in one function, and make every place that

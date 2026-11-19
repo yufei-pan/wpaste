@@ -213,20 +213,27 @@ def safe_name(name):
 
 # The Unicode categories a terminal acts on, or that hide things on a line: Cc (controls: ESC, BEL, CR, NUL, DEL and
 # the C1 controls, which include CSI), Cf (format characters, such as U+202E, which flips the text after it, and
-# U+200B), Cs (a lone surrogate), Zl and Zp (the line and paragraph separators). The spaces (Zs) are not in it: a
-# no-break space, a narrow no-break space (macOS puts one before AM/PM in a screenshot's name) and a full-width space
-# are plain text. Co and Cn are not in it either, so a character assigned after this Python's Unicode data was made
-# still shows. A command-line client of this server keeps a copy of this rule (its printable()), and its tests compare
+# U+200B), Cs (a lone surrogate: not text, and print() or an encode to UTF-8 of it raises), Zl and Zp (the line and
+# paragraph separators). The spaces (Zs) are not in it: a no-break space, a narrow no-break space (macOS puts
+# one before AM/PM in a screenshot's name) and a full-width space are plain text. Co and Cn are not in it either, so a
+# character assigned after this Python's Unicode data was made still shows. Three Cf characters are kept, see
+# TEXT_SHAPING. A command-line client of this server keeps a copy of this rule (its printable()), and its tests compare
 # the two over every code point: change both together.
 TERMINAL_UNSAFE = frozenset({'Cc', 'Cf', 'Cs', 'Zl', 'Zp'})
+# Cf characters that shape ordinary text and that no terminal acts on: the zero-width non-joiner (Persian, Indic), the
+# zero-width joiner (emoji such as a woman technologist, a rainbow flag, a family) and the soft hyphen (web-copied text).
+# Replacing them mangled such text. The bidi controls (U+202A-202E, U+2066-2069, U+200E, U+200F) and U+200B stay
+# replaced: they reorder or hide what a line shows.
+TEXT_SHAPING = frozenset({'\u200c', '\u200d', '\u00ad'})
 
 
 def terminal_text(text, keep=''):
     '''Text for a terminal: each character of TERMINAL_UNSAFE made `_`, except
-    those in `keep`. The one rule for everything this server prints to a
-    terminal (the curl view's names and text bodies, `admin list`); every call
-    site uses it, so none can differ.'''
-    return ''.join(c if c in keep or unicodedata.category(c) not in TERMINAL_UNSAFE else '_' for c in text)
+    those in `keep` and TEXT_SHAPING. The one rule for everything this server
+    prints to a terminal (the curl view's names and text bodies, `admin list`);
+    every call site uses it, so none can differ.'''
+    return ''.join(c if c in keep or c in TEXT_SHAPING or unicodedata.category(c) not in TERMINAL_UNSAFE else '_'
+                   for c in text)
 
 
 def terminal_name(name):

@@ -19,9 +19,11 @@ PNG = b'\x89PNG\r\n\x1a\n' + b'\x00' * 64
 
 
 def terminal_safe(text, keep=''):
-    '''True when `text` holds nothing a terminal acts on, by the categories alone (Cc, Cf, Cs, Zl, Zp) and so apart from the
-    rule under test: a test of the rule must not be built on the rule's own function.'''
-    return all(c in keep or unicodedata.category(c) not in ('Cc', 'Cf', 'Cs', 'Zl', 'Zp') for c in text)
+    '''True when `text` holds nothing a terminal acts on, by the categories alone (Cc, Cf, Cs, Zl, Zp, minus the three
+    text-shaping characters ZWNJ, ZWJ and the soft hyphen) and so apart from the rule under test: a test of the rule must
+    not be built on the rule's own function.'''
+    return all(c in keep or c in '\u200c\u200d\u00ad' or unicodedata.category(c) not in ('Cc', 'Cf', 'Cs', 'Zl', 'Zp')
+               for c in text)
 
 
 def backdate(index, message_id, seconds):
@@ -283,8 +285,19 @@ def test_terminal_name_keeps_spaces_and_replaces_what_a_terminal_acts_on():
     hostile = 'a\x1bb\x07c\u202ed\u200be\u2028f\u2029g\x85h\x7fi\x00j\ud800k\r\nl'
     assert wpaste.terminal_name(hostile) == 'a_b_c_d_e_f_g_h_i_j_k__l'
     assert wpaste.terminal_name('\ue000\u0378\U0001f9ff') == '\ue000\u0378\U0001f9ff'      # Co, Cn, an emoji
+    # the bidi controls and the zero-width space reorder or hide what a line shows, so they stay replaced
+    assert wpaste.terminal_name('a\u202ab\u202bc\u202cd\u202de\u2066f\u2067g\u2068h\u2069i\u200ej\u200fk\ufeffl') == 'a_b_c_d_e_f_g_h_i_j_k_l'
     # the keep list holds newline and tab and nothing else
     assert wpaste.terminal_text('a\n\tb\r\x1bc', keep='\n\t') == 'a\n\tb__c'
+
+
+def test_terminal_text_keeps_the_characters_that_shape_text():
+    '''ZWNJ, ZWJ and the soft hyphen are Cf, but they shape ordinary text (Persian and Indic words, emoji sequences,
+    web-copied text) and no terminal acts on them: replacing them gave `\U0001f469_\U0001f4bb` for a woman technologist.'''
+    for text in ('\U0001f469\u200d\U0001f4bb', '\U0001f3f3\ufe0f\u200d\U0001f308', '\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645', 'soft\u00adhyphen'):
+        assert wpaste.terminal_text(text) == text
+        assert wpaste.terminal_name(text) == text
+    assert wpaste.terminal_text('a\u200db\u200b\u200dc') == 'a\u200db_\u200dc'      # U+200B beside a kept one still goes
 
 
 def test_curl_view_keeps_the_spaces_in_a_file_name(client):
@@ -316,6 +329,18 @@ def test_curl_view_prints_text_bodies_without_what_a_terminal_acts_on(client):
     upload(client, 'text', b'# notes\n\x1b[2Jgone\n', 'notes.md')
     body = client.get('/', headers=curl).get_data(as_text=True)
     assert '# notes\n_[2Jgone\n' + '-' * 60 in body, repr(body)
+
+
+def test_curl_view_keeps_a_joiner_in_a_name_and_a_body(client):
+    '''A phone post "Deploy done" with a woman technologist emoji (a ZWJ sequence) and a file named after a family emoji
+    show as sent; a zero-width space beside them is still replaced.'''
+    curl = {'User-Agent': 'curl/8.5'}
+    emoji = '\U0001f469\u200d\U0001f4bb'
+    assert client.post('/message', data={'message': f'Deploy done {emoji}\u200b!'}).status_code == 200
+    upload(client, 'file', b'x', f'family{emoji}.png')
+    body = client.get('/', headers=curl).get_data(as_text=True)
+    assert f'Deploy done {emoji}_!\n' + '-' * 60 in body, repr(body)
+    assert f'(family{emoji}.png)' in body, repr(body)
 
 
 def test_curl_hint_for_a_new_board_names_the_secret_form(client):
