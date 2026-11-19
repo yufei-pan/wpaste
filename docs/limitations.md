@@ -4,7 +4,7 @@ Deferred entries are planned work; known limitations are approved by the repo's 
 don't raise these again without new evidence.
 
 ### Successful setups and logins are not throttled
-- Kind: deferred.
+- Kind: known limitation.
 - What the operator sees: the throttles cover `/access` lookups and wrong codes (a lockout per IP and per board). A
   client can make successful setups (each adds a board that stays until its owner or the operator deletes it, and
   writes its registry row twice) and successful logins to a board it owns (each appends the row with one more session
@@ -19,8 +19,10 @@ don't raise these again without new evidence.
 - Why: a successful setup or login needs a code that matches a secret the client holds, so it was never counted as
   abuse; the failure throttles exist to stop guessing. A per-IP throttle on these needs a measured limit (every number
   has a reason) and is only as good as the client IP: with `TRUSTED_PROXY_HOPS` wrong, every visitor shares one
-  bucket, and a throttle would then lock out the owner too.
-- Plan: throttle successful setups and logins per IP the way `/access` is (same `RateLimiter`, a sliding window),
-  sized from a measurement of real use.
-- Revisit when: the registry is read by anything that cannot take an unbounded file, the next change to the
-  throttles, or a registry past a few MB is seen.
+  bucket, and a throttle would then lock out the owner too. Reaching the sizes above takes a deliberate flood, and
+  nothing fails silently: a reader that refuses says why, the page keeps working, and `admin remove-board` clears the
+  junk boards. The fix, if needed: throttle successful setups and logins per IP the way `/access` is (same
+  `RateLimiter`, a sliding window), sized from a measurement of real use.
+- Revisit when: a registry past a few MB is seen, a flood of setups or logins is seen, or the next change to the
+  throttles.
+- Approved: 2026-11-19, the owner picked "Known limitation (Recommended)".
