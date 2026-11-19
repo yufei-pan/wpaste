@@ -97,9 +97,10 @@ curl -H 'X-TOTP: 123456' -F 'text=@notes.md' https://host/b/myboard/message
 
 The plain-text view is for a terminal, so it replaces what a terminal acts on with `_`, in names and in text bodies
 alike: control characters (ESC, BEL and the rest), format characters such as U+202E (which flips the text after it)
-and U+200B, lone surrogates, and the line and paragraph separators. The joiners that shape ordinary text stay (the
-zero-width joiner of emoji such as a woman technologist, the zero-width non-joiner of Persian and Indic text, the soft
-hyphen), and so do spaces of every kind. Newlines and tabs in a text body stay too. `/text/<id>` still sends the stored bytes as they are.
+and U+200B, lone surrogates, and the line and paragraph separators. Three characters that shape ordinary text stay
+(the zero-width joiner of emoji such as a woman technologist, the zero-width non-joiner of Persian and Indic text, and
+the soft hyphen), and so do spaces of every kind. The flags of England, Scotland and Wales are built from invisible tag
+characters, which are replaced, so they show with `_` after the black flag (a known limitation). Newlines and tabs in a text body stay too. `/text/<id>` still sends the stored bytes as they are.
 
 A text file sent as a `text` part keeps its name, and the page shows it by
 that name: `.md` as Markdown, `.html` as HTML, anything else (code, logs) as

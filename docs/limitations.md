@@ -26,3 +26,15 @@ don't raise these again without new evidence.
 - Revisit when: a registry past a few MB is seen, a flood of setups or logins is seen, or the next change to the
   throttles.
 - Approved: 2026-11-19, the owner picked "Known limitation (Recommended)".
+
+### The curl view shows the flags of England, Scotland and Wales with `_`
+- Kind: known limitation.
+- What the operator sees: in the plain-text view a terminal gets, a text post or a file name holding one of these three
+  flags shows the black flag followed by `_` characters, one for each tag character: "Come on 🏴______!" for the
+  England flag. The page and `/text/<id>` show and send the text as it was posted.
+- Why: these three are the only emoji built from tag characters (U+E0020-E007F), which are invisible and are the known
+  way to hide ASCII text inside a line. Keeping them would let an anonymous post on the public board carry text a
+  person at a terminal cannot see. Keeping them only inside a flag sequence would make the rule depend on the characters
+  around each one, unlike the per-character rule that both this view and its client copy use.
+- Revisit when: the owner posts one of these flags and minds how it shows.
+- Approved: 2026-11-19, the owner picked "Known limitation (Recommended)".
