@@ -13,6 +13,7 @@ import json
 import secrets
 import mimetypes
 import threading
+import unicodedata
 import TSVZ
 #import imghdr
 import filetype
@@ -210,13 +211,29 @@ def safe_name(name):
     return CONTROL_CHARS.sub('_', name)
 
 
+# The Unicode categories a terminal acts on, or that hide things on a line: Cc (controls: ESC, BEL, CR, NUL, DEL and
+# the C1 controls, which include CSI), Cf (format characters, such as U+202E, which flips the text after it, and
+# U+200B), Cs (a lone surrogate), Zl and Zp (the line and paragraph separators). The spaces (Zs) are not in it: a
+# no-break space, a narrow no-break space (macOS puts one before AM/PM in a screenshot's name) and a full-width space
+# are plain text. Co and Cn are not in it either, so a character assigned after this Python's Unicode data was made
+# still shows. A command-line client of this server keeps a copy of this rule (its printable()), and its tests compare
+# the two over every code point: change both together.
+TERMINAL_UNSAFE = frozenset({'Cc', 'Cf', 'Cs', 'Zl', 'Zp'})
+
+
+def terminal_text(text, keep=''):
+    '''Text for a terminal: each character of TERMINAL_UNSAFE made `_`, except
+    those in `keep`. The one rule for everything this server prints to a
+    terminal (the curl view's names and text bodies, `admin list`); every call
+    site uses it, so none can differ.'''
+    return ''.join(c if c in keep or unicodedata.category(c) not in TERMINAL_UNSAFE else '_' for c in text)
+
+
 def terminal_name(name):
-    '''A stored name for a terminal (the curl view, `admin list`): every character
-    that is not printable made `_`, as str.isprintable has it. That is the controls
-    safe_name replaces and also the format characters (U+202E, which flips the line
-    that follows it), line and paragraph separators and unassigned characters,
-    which a terminal also acts on or hides things behind.'''
-    return ''.join(c if c.isprintable() else '_' for c in name)
+    '''A stored name for a terminal (the curl view, `admin list`), by the rule
+    of terminal_text. safe_name, for a download header, only removes what
+    gunicorn refuses: it keeps the name the user sent.'''
+    return terminal_text(name)
 
 # get_file has several default-board rules (/image, /video, /file, /text); by
 # default Werkzeug 308-redirects all but one of them to that one.
@@ -518,7 +535,9 @@ def render_plaintext(slug):
             except OSError:               # purged since live_rows() looked
                 continue
             lines.append(f'[{ts}] {mid} text')
-            lines.append(body.rstrip('\n'))
+            # read_text has read CR and CRLF as newlines; newline and tab stay, and the rest is held to the same rule as
+            # a name. /text/<id> still sends the stored bytes.
+            lines.append(terminal_text(body, keep='\n\t').rstrip('\n'))
         else:
             lines.append(f'[{ts}] {mid} {mtype}  {base}{prefix}/{mtype}/{mid}  ({terminal_name(fname)})')
         lines.append('-' * 60)
@@ -863,8 +882,7 @@ def run_admin(argv):
             print('No boards.')
         for m in rows:
             ntok = len([t for t in boards.registry[m['slug']][4].split(',') if t])
-            # The display name is whatever the first visitor typed at setup: shown with every non-printable character
-            # made `_`.
+            # The display name is whatever the first visitor typed at setup: shown by terminal_name's rule.
             print(f"{m['slug']}\tperm={m['perm']}\tsessions={ntok}\tcreated={m['created']}"
                   f"\tdisplay={terminal_name(m['display'])}")
     elif args.cmd == 'remove-board':

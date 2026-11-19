@@ -59,7 +59,7 @@
   caller that sent the wrong shape is told at once; and where the server already knows what a stored thing
   is, it serves it as that, not as what its bytes could pass for.
 
-## 2026-11-18 Setup takes only the secret it offered
+## 2026-11-18 Setup takes only a well-formed secret
 - Changed: `POST /b/<slug>/setup` answers `400 {"success": false, "message": "Invalid secret."}` for a secret that
   is not 32 characters of A-Z and 2-7, the form `/access` offers, where it stored any secret whose code verified
   (16 lower-case characters, a short or long one, one with padding or in lower case). Nothing in the page changes:
@@ -69,10 +69,12 @@
   wrong would count toward the board's lockout, which locks the owner's phone too; so it accepts only the form the
   server makes.
 - Original design was wrong because: the server checked that the secret and the code agreed, which any base32 string
-  passes, and never that the secret was one the server would have made. The candidate came from the server, so the
-  server could have required it back in that form.
-- Lesson: when a server hands out a value for the client to send back, it accepts that form only, not whatever its
-  verifier happens to tolerate; other readers of what it stores then need no guess.
+  passes, and never that the secret had the form the server makes. The candidate came from the server, so the server
+  could have required that form back. (It checks the form only: it keeps no list of the candidates it offered, so any
+  well-formed secret whose code verifies is accepted, offered or not.)
+- Lesson: when a server hands out a value in a fixed form for the client to send back, it accepts that form only, not
+  whatever its verifier happens to tolerate; other readers of what it stores then need no guess. Say what is checked:
+  the form, not that this very value was the one offered.
 
 ## 2026-11-18 Setup stores a display name of at most 64 characters
 - Changed: `POST /b/<slug>/setup` stores the board's display name cut to 64 characters (`DISPLAY_MAX`, canonical_slug's
@@ -88,3 +90,20 @@
   only bound was the framework's per-field default, which is sized for a pasted log, not for a name.
 - Lesson: a field that anyone can set and the server stores gets a cap where it comes in, at what its real use needs
   (here, the longest value the page itself sends), never at the framework's default for the largest legitimate field.
+
+## 2026-11-19 One terminal rule, by Unicode category
+- Changed: the plain-text (curl) view and `admin list` now make `_` of exactly the characters in the Unicode categories
+  Cc, Cf, Cs, Zl and Zp (`terminal_text`, with `terminal_name` and the text bodies both calling it). Spaces of every kind
+  now stay, where `str.isprintable` made every Unicode space but U+0020 into `_`: a macOS screenshot name (U+202F before
+  AM/PM) reads as it was sent. Private-use and unassigned characters stay too. A text post's body in the curl view is now
+  filtered the same way (newline and tab kept), where it was printed as stored, so an anonymous post on the public board
+  holding an OSC 52 sequence can no longer set the clipboard of whoever curls the board. `/text/<id>` still sends the
+  stored bytes. The download header's `safe_name` is unchanged: it only removes what gunicorn refuses.
+- Why we had to change: four review rounds each found another way an outside name or text reached a terminal: a regex of
+  controls, then `str.isprintable` (which also replaced the no-break spaces of real names and left the text bodies out),
+  then a copy of each in the client. Each call site had picked its own character rule.
+- Original design was wrong because: "safe to show on a terminal" was never decided once. Each new place that printed
+  outside text wrote its own predicate, and each was right for the case in front of it and wrong for the next.
+- Lesson: decide what is safe to show on a terminal once, by Unicode category, in one function, and make every place that
+  prints outside text call it; a client of the server keeps a copy that its tests compare with this one over every code
+  point. A reviewer's check for a new print site is then "does it call the function", not a re-derivation of the rule.

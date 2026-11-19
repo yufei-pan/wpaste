@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import sys
 import time
+import unicodedata
 import uuid
 
 import pyotp
@@ -15,6 +16,12 @@ import app as wpaste
 from conftest import ROOT, messages, new_board, upload
 
 PNG = b'\x89PNG\r\n\x1a\n' + b'\x00' * 64
+
+
+def terminal_safe(text, keep=''):
+    '''True when `text` holds nothing a terminal acts on, by the categories alone (Cc, Cf, Cs, Zl, Zp) and so apart from the
+    rule under test: a test of the rule must not be built on the rule's own function.'''
+    return all(c in keep or unicodedata.category(c) not in ('Cc', 'Cf', 'Cs', 'Zl', 'Zp') for c in text)
 
 
 def backdate(index, message_id, seconds):
@@ -263,7 +270,52 @@ def test_curl_view_prints_no_control_characters(client):
     assert "Board 'bad_name_' is private." in anon
     for text in (body, anon):
         assert not wpaste.CONTROL_CHARS.search(text.replace('\n', ''))
-        assert all(c.isprintable() for c in text.replace('\n', '')), repr(text)
+        assert terminal_safe(text, keep='\n'), repr(text)
+
+
+def test_terminal_name_keeps_spaces_and_replaces_what_a_terminal_acts_on():
+    '''One rule, by Unicode category: controls (Cc), format characters (Cf), surrogates (Cs) and the line and paragraph
+    separators (Zl, Zp) become `_`; every space (Zs) stays, so a macOS screenshot name (a narrow no-break space before PM)
+    reads as it was sent. Private-use and unassigned characters stay, so a newer emoji still shows.'''
+    shot = 'Screenshot 2026-11-18 at 9.41.03\u202fPM.png'
+    assert wpaste.terminal_name(shot) == shot
+    assert wpaste.terminal_name('Prix\u00a0: 10\u202f\u20ac \u6771\u4eac\u3000\u99c5\u2003x') == 'Prix\u00a0: 10\u202f\u20ac \u6771\u4eac\u3000\u99c5\u2003x'
+    hostile = 'a\x1bb\x07c\u202ed\u200be\u2028f\u2029g\x85h\x7fi\x00j\ud800k\r\nl'
+    assert wpaste.terminal_name(hostile) == 'a_b_c_d_e_f_g_h_i_j_k__l'
+    assert wpaste.terminal_name('\ue000\u0378\U0001f9ff') == '\ue000\u0378\U0001f9ff'      # Co, Cn, an emoji
+    # the keep list holds newline and tab and nothing else
+    assert wpaste.terminal_text('a\n\tb\r\x1bc', keep='\n\t') == 'a\n\tb__c'
+
+
+def test_curl_view_keeps_the_spaces_in_a_file_name(client):
+    upload(client, 'file', b'x', 'Screenshot 2026-11-18 at 9.41.03\u202fPM.png')
+    body = client.get('/', headers={'User-Agent': 'curl/8.5'}).get_data(as_text=True)
+    assert '(Screenshot 2026-11-18 at 9.41.03\u202fPM.png)' in body
+
+
+def test_curl_view_prints_text_bodies_without_what_a_terminal_acts_on(client):
+    '''The public board takes anonymous posts: a text body holding an OSC 52 sequence (which can set the clipboard of whoever
+    curls the board) shows with its ESC and BEL as `_`. Tabs and line breaks stay (read_text has made a CR or CRLF a newline,
+    so no CR reaches a terminal). /text/<id> still sends the stored bytes.'''
+    curl = {'User-Agent': 'curl/8.5'}
+    evil = 'hello \x1b]52;c;aGk=\x07 end\n\tindented\nline3\n'
+    assert client.post('/message', data={'message': evil}).status_code == 200
+    body = client.get('/', headers=curl).get_data(as_text=True)
+    assert 'hello _]52;c;aGk=_ end\n\tindented\nline3\n' + '-' * 60 in body, repr(body)
+    assert '\x1b' not in body and '\x07' not in body
+    assert terminal_safe(body, keep='\n\t'), repr(body)
+    mid = messages(client)[0]['id']
+    assert client.get(f'/text/{mid}').get_data(as_text=True) == evil
+    # CRLF and a lone CR (newlines by read_text), a separator and a right-to-left override; spaces of every kind stay
+    client.post('/delete_all')
+    assert client.post('/message', data={'message': 'one\r\ntwo\rthree\u2028four\u202efive Prix\u00a0: 10\u202f\u20ac'}).status_code == 200
+    body = client.get('/', headers=curl).get_data(as_text=True)
+    assert 'one\ntwo\nthree_four_five Prix\u00a0: 10\u202f\u20ac\n' + '-' * 60 in body, repr(body)
+    # a text file's body is held to the same rule
+    client.post('/delete_all')
+    upload(client, 'text', b'# notes\n\x1b[2Jgone\n', 'notes.md')
+    body = client.get('/', headers=curl).get_data(as_text=True)
+    assert '# notes\n_[2Jgone\n' + '-' * 60 in body, repr(body)
 
 
 def test_curl_hint_for_a_new_board_names_the_secret_form(client):
@@ -271,8 +323,9 @@ def test_curl_hint_for_a_new_board_names_the_secret_form(client):
     assert 'does not exist' in body and '32 characters of A-Z and 2-7' in body, body
 
 
-def test_setup_takes_only_the_secret_the_page_offered(client):
-    '''/access offers a 32-character upper-case base32 secret, and setup takes that form only: another secret whose code
+def test_setup_takes_only_a_well_formed_secret(client):
+    '''/access offers a 32-character upper-case base32 secret, and setup takes that form only (it checks the form, not that
+    this very secret was the one offered): another secret whose code
     verifies (16 lower-case characters, a short or long one, padding, a wrong case) is a 400 and no board.'''
     offered = pyotp.random_base32()
     assert wpaste.valid_secret_form(offered) and len(offered) == 32
@@ -330,7 +383,7 @@ def test_setup_stores_a_display_name_of_at_most_64_characters(client):
 # --- admin CLI -----------------------------------------------------------------
 def test_admin_list_prints_no_control_characters(tmp_path):
     '''A board's display name is whatever the first visitor typed at setup, so `admin list` shows it with each character
-    that is not printable made `_`, as the curl view does: the operator's terminal acts on ESC sequences, and U+202E flips
+    that terminal_text replaces made `_`, as the curl view does: the operator's terminal acts on ESC sequences, and U+202E flips
     the text after it.'''
     appdir = tmp_path / 'wpaste'
     appdir.mkdir()
@@ -342,7 +395,7 @@ def test_admin_list_prints_no_control_characters(tmp_path):
     out = subprocess.run([sys.executable, str(appdir / 'app.py'), 'admin', 'list'],
                          cwd=tmp_path, check=True, capture_output=True, text=True).stdout
     assert 'display=bad_[2Jname____\n' in out          # ESC, BEL, C1, U+202E (right-to-left override) and U+200B
-    assert all(c.isprintable() for c in out.replace('\n', '').replace('\t', '')), repr(out)
+    assert terminal_safe(out, keep='\n\t'), repr(out)
 
 
 def test_admin_cli_finds_the_data_from_any_directory(tmp_path):

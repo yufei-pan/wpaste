@@ -95,6 +95,11 @@ curl -H 'X-TOTP: 123456' -d 'message=hi' https://host/b/myboard/message
 curl -H 'X-TOTP: 123456' -F 'text=@notes.md' https://host/b/myboard/message
 ```
 
+The plain-text view is for a terminal, so it replaces what a terminal acts on with `_`, in names and in text bodies
+alike: control characters (ESC, BEL and the rest), format characters such as U+202E (which flips the text after it),
+lone surrogates, and the line and paragraph separators. Spaces of every kind stay. Newlines and tabs in a text body
+stay too. `/text/<id>` still sends the stored bytes as they are.
+
 A text file sent as a `text` part keeps its name, and the page shows it by
 that name: `.md` as Markdown, `.html` as HTML, anything else (code, logs) as
 plain text. A file that isn't UTF-8 (or holds a NUL byte), or is bigger than a
@@ -119,7 +124,7 @@ The commands work from any directory: they use the data in wpaste's own folder,
 where the server runs.
 
 ```bash
-python app.py admin list                  # list boards (names shown with non-printable characters as `_`)
+python app.py admin list                  # list boards (names shown as the curl view shows them, see above)
 python app.py admin remove-board <name>   # delete a board and its data
 python app.py admin regen-totp <name>     # new secret (logs everyone out); prints QR/secret
 ```
