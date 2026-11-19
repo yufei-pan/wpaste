@@ -90,7 +90,18 @@ curl https://host/                                   # public board, plain text
 curl https://host/b/myboard                          # a readable board
 curl -H 'X-TOTP: 123456' https://host/b/myboard      # private board, headless
 curl -H 'X-TOTP: 123456' -d 'message=hi' https://host/b/myboard/message
+curl -H 'X-TOTP: 123456' -F 'text=@notes.md' https://host/b/myboard/message
 ```
+
+A text file sent as a `text` part keeps its name, and the page shows it by
+that name: `.md` as Markdown, `.html` as HTML, anything else (code, logs) as
+plain text. A file that isn't UTF-8, or is bigger than a pasted message may be,
+is kept as a download instead. Pasted text (`message`) is shown by what it
+looks like. The other upload parts are `image`, `video` and `file`.
+
+The names `default` and `main` are reserved for the public board, so no private
+board can take them. **Upgrading?** A board already named `main` can no longer be
+opened after the upgrade.
 
 ### Admin (server operator)
 
@@ -131,6 +142,7 @@ as wpaste.
 ![The public board](etc/screenshot-board.png)
 
 - Text, Markdown, HTML, images, videos, and any other files — several at once
+- Text files keep their name and show by it (`.md` as Markdown, code as plain text); SVG files show inline
 - Paste (<kbd>Ctrl/⌘</kbd>+<kbd>V</kbd>) or drag and drop anywhere on the page, or pick files
 - *Copy* gives back exactly the text that was pasted; <kbd>Ctrl/⌘</kbd>+<kbd>C</kbd> with nothing selected copies the newest message
 - Delete messages one at a time or all at once; messages expire on their own (`RETENTION_TIME`)
