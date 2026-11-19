@@ -20,6 +20,7 @@ INCLUDES the key at element [0], but writes assign only the trailing columns):
     read:   registry[slug][1]=secret [2]=perm [3]=retention [4]=tokens
             [5]=created [6]=display
 '''
+import datetime
 import os
 import re
 import time
@@ -93,11 +94,17 @@ def new_secret():
 def provisioning_uri(secret, display, issuer='wpaste'):
     return pyotp.TOTP(secret).provisioning_uri(name=display or 'board', issuer_name=issuer)
 
-def verify_code(secret, code):
+def verify_code(secret, code, now=None):
+    '''True when `code` is the secret's TOTP code at `now` (an aware datetime,
+    default this moment) or one step either side. The time handed to pyotp is
+    always timezone-aware: given none, or a naive one, pyotp before 2.12 counts
+    from local time through time.mktime, which in the hour repeated when daylight
+    saving ends reads an hour early and refuses every valid code.'''
     if not secret or not code:
         return False
     try:
-        return pyotp.TOTP(secret).verify(str(code).strip(), valid_window=1)
+        return pyotp.TOTP(secret).verify(str(code).strip(), valid_window=1,
+                                         for_time=now or datetime.datetime.now(datetime.timezone.utc))
     except Exception:
         return False
 

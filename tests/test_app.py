@@ -4,6 +4,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 
 import pyotp
 import pytest
@@ -237,6 +238,27 @@ def test_curl_on_a_private_board_gets_a_hint(client):
     r = wpaste.app.test_client().get(f'/b/{slug}', headers={'User-Agent': 'curl/8.5'})
     body = r.get_data(as_text=True)
     assert 'is private' in body and 'hidden' not in body
+
+
+def test_curl_view_prints_no_control_characters(client):
+    '''A stored name (a file's, a board's) can hold ESC, BEL or a C1 character, which a terminal acts on: the curl
+    view prints each as `_`, as a download name has it.'''
+    curl = {'User-Agent': 'curl/8.5'}
+    upload(client, 'file', b'x', 'evil\x1b[2Jname.bin')
+    body = client.get('/', headers=curl).get_data(as_text=True)
+    assert '(evil_[2Jname.bin)' in body
+    slug = 'b-' + uuid.uuid4().hex[:12]
+    secret = pyotp.random_base32()
+    r = client.post(f'/b/{slug}/setup', data={'secret': secret, 'code': pyotp.TOTP(secret).now(),
+                                                'display': 'bad\x07name\x9b'})
+    assert r.status_code == 200, r.get_json()
+    upload(client, 'file', b'y', 'bell\x07.bin', prefix=f'/b/{slug}')
+    body = client.get(f'/b/{slug}', headers=curl).get_data(as_text=True)
+    assert "board 'bad_name_'" in body and '(bell_.bin)' in body
+    anon = wpaste.app.test_client().get(f'/b/{slug}', headers=curl).get_data(as_text=True)
+    assert "Board 'bad_name_' is private." in anon
+    for text in (body, anon):
+        assert not wpaste.CONTROL_CHARS.search(text.replace('\n', ''))
 
 
 # --- admin CLI -----------------------------------------------------------------

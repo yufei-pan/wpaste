@@ -200,8 +200,16 @@ app.config['MAX_FORM_MEMORY_SIZE'] = min(MAX_CONTENT_LENGTH, 64 * 1024**2)
 # /messages inlines every text post, so a text file gets the same bound as a
 # pasted message; a bigger one is kept as a file.
 TEXT_POST_MAX = app.config['MAX_FORM_MEMORY_SIZE']
-# C0, DEL and C1 control characters: replaced in the name a download is sent under.
+# C0, DEL and C1 control characters: replaced (safe_name) in the name a download
+# is sent under and in the names the curl view prints.
 CONTROL_CHARS = re.compile(r'[\x00-\x1f\x7f-\x9f]')
+
+
+def safe_name(name):
+    '''A stored name with every control character made `_`: gunicorn refuses a
+    header value holding ESC, BEL or DEL, and a terminal acts on them.'''
+    return CONTROL_CHARS.sub('_', name)
+
 # get_file has several default-board rules (/image, /video, /file, /text); by
 # default Werkzeug 308-redirects all but one of them to that one.
 app.url_map.redirect_defaults = False
@@ -483,10 +491,10 @@ def render_plaintext(slug):
         m = boards.meta(slug)
         perm = m['perm']
         if not can(perm, 'read', board_authed(slug)):
-            return (f"Board '{m['display']}' is private.\n"
+            return (f"Board '{safe_name(m['display'])}' is private.\n"
                     f"Read it: curl -H 'X-TOTP: <code>' {base}/b/{slug}\n")
         state = boards.state(slug)
-        title = f"wpaste — board '{m['display']}' ({perm})"
+        title = f"wpaste — board '{safe_name(m['display'])}' ({perm})"
     prefix = f'/b/{slug}' if slug else ''
     rows = live_rows(state)
 
@@ -503,7 +511,7 @@ def render_plaintext(slug):
             lines.append(f'[{ts}] {mid} text')
             lines.append(body.rstrip('\n'))
         else:
-            lines.append(f'[{ts}] {mid} {mtype}  {base}{prefix}/{mtype}/{mid}  ({fname})')
+            lines.append(f'[{ts}] {mid} {mtype}  {base}{prefix}/{mtype}/{mid}  ({safe_name(fname)})')
         lines.append('-' * 60)
     auth_hint = '' if slug is None else "  -H 'X-TOTP: <code>'"
     lines += ['', f'post: curl -d "message=hello"{auth_hint} {base}{prefix}/message']
@@ -654,7 +662,7 @@ def get_file(slug, message_id):
     # The stored name goes into Content-Disposition, and gunicorn refuses a header value with a control character
     # (ESC, BEL, DEL: a 500 on every download of that post; Werkzeug itself refuses a newline). The page and the
     # listing still show the name as stored.
-    download_name = CONTROL_CHARS.sub('_', row[4])
+    download_name = safe_name(row[4])
     # Confine to this board's directory before serving. Both sides are made
     # absolute: commonpath() refuses to compare absolute with relative, and
     # send_file() would resolve a relative path against the code folder rather
